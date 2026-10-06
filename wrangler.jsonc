@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pizarra-semanal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // El Worker se ejecuta antes que los assets en TODAS las rutas: así valida
+  // Cloudflare Access incluso para el HTML y añade cabeceras de seguridad.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+
+  // Sin URLs de preview: cada versión subida tendría su propia URL pública.
+  "workers_dev": true,
+  "preview_urls": false,
+
+  "kv_namespaces": [
+    {
+      // Crea el namespace con `npx wrangler kv namespace create TOKENS`
+      // y pega aquí el id que devuelve (el id no es secreto).
+      "binding": "TOKENS",
+      "id": "REEMPLAZA_CON_EL_ID_DEL_NAMESPACE"
+    }
+  ],
+
+  // Variables NO secretas. Todo lo demás (credenciales, AUD y dominio de Access,
+  // correos autorizados) va con `wrangler secret put` para no dejarlo en el repo (ver README).
+  "vars": {
+    "TIMEZONE": "America/Lima",
+    // "undone" (POST /task/undone) o "scan" (recorre todos los proyectos).
+    "TICKTICK_STRATEGY": "undone"
+  },
+
+  "observability": { "enabled": true }
+}

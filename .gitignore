@@ -1,0 +1,18 @@
+# Dependencias y builds
+node_modules/
+dist/
+.wrangler/
+
+# Secretos locales (NUNCA al repo)
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

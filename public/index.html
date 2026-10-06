@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Pizarra semanal</title>
+  <meta name="theme-color" content="#EEF1F4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E141A" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Pizarra">
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@500&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="hgroup">
+      <span class="eyebrow" id="today-label">—</span>
+      <h1>Pizarra semanal</h1>
+    </div>
+    <div class="hactions">
+      <span class="fresh" id="global-status">Cargando…</span>
+      <button id="refresh-btn" type="button">Actualizar</button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <div class="summary">
+    <div class="tile focus" id="tile-next"></div>
+    <div class="tile" id="tile-tasks"></div>
+    <div class="tile" id="tile-exams"></div>
+  </div>
+
+  <div class="cols">
+    <section class="panel" aria-labelledby="h-cal">
+      <div class="phead"><h2 id="h-cal">Agenda · 7 días</h2><span class="fresh" id="fresh-cal"></span></div>
+      <div id="cal-body"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-tt">
+      <div class="phead"><h2 id="h-tt">Tareas TickTick</h2><span class="fresh" id="fresh-tt"></span></div>
+      <div id="tt-body"></div>
+    </section>
+  </div>
+
+  <footer>Se actualiza sola cada 5 minutos mientras la página está abierta. Fuente: Google Calendar (calendario principal) y TickTick (pendientes vencidos y de los próximos 7 días; evaluaciones hasta 70 días). «Hecha» pide un segundo toque para confirmar.</footer>
+</div>
+</body>
+</html>

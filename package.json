@@ -1,0 +1,28 @@
+{
+  "name": "pizarra-semanal",
+  "version": "1.0.0",
+  "description": "Panel personal: agenda de Google Calendar y tareas de TickTick (Cloudflare Worker)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types --include-runtime false"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "module",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261006.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.147.0"
+  },
+  "dependencies": {
+    "jose": "^6.2.12"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
