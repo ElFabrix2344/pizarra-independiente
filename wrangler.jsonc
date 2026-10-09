@@ -24,7 +24,7 @@
       // Crea el namespace con `npx wrangler kv namespace create TOKENS`
       // y pega aquí el id que devuelve (el id no es secreto).
       "binding": "TOKENS",
-      "id": "REEMPLAZA_CON_EL_ID_DEL_NAMESPACE"
+      "id": "29b06022bfe04c7c9a15fcf2458ac05a"
     }
   ],
 
