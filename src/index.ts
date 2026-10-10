@@ -23,7 +23,8 @@ const CSP = [
 ].join('; ');
 
 export default {
-  async fetch(req: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(req: Request, rawEnv: Env, _ctx: ExecutionContext): Promise<Response> {
+    const env = trimSecrets(rawEnv);
     const url = new URL(req.url);
     const local = isLocalDev(url, env);
 
@@ -148,6 +149,17 @@ function assertSameOrigin(req: Request, url: URL) {
   if (origin !== url.origin || req.headers.get('X-Pizarra') !== '1') {
     throw new ApiError('forbidden', 403, 'Petición rechazada (origen no válido).');
   }
+}
+
+/** Quita espacios y saltos de línea pegados por accidente al cargar los secretos. */
+function trimSecrets(env: Env): Env {
+  const keys = [
+    'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'TICKTICK_CLIENT_ID', 'TICKTICK_CLIENT_SECRET',
+    'TICKTICK_API_TOKEN', 'TOKEN_ENCRYPTION_KEY', 'ACCESS_TEAM_DOMAIN', 'ACCESS_AUD', 'ALLOWED_EMAILS',
+  ] as const;
+  const out: Env = { ...env };
+  for (const k of keys) if (typeof out[k] === 'string') out[k] = out[k]!.trim().replace(/^["']|["']$/g, '');
+  return out;
 }
 
 function pickStrategy(url: URL, env: Env): Strategy {
