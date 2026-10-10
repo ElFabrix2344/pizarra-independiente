@@ -7,15 +7,23 @@ const SERVER = { google: CAL, ticktick: TT };
 const fKey = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
 const fTime = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false });
 const fDay = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'short' });
-const fLong = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' });
+const fWeekday = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, weekday: 'long' });
+const fDayMon = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, day: 'numeric', month: 'short' });
+const fDayNum = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, day: 'numeric' });
+const fMonth = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, month: 'long' });
 const dayKey = d => fKey.format(d);
 const addDays = (k, n) => { const [y, m, d] = k.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n, 12)).toISOString().slice(0, 10); };
 const keyDate = k => new Date(k + 'T12:00:00-05:00');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const today = () => dayKey(new Date());
-function dayLabel(k) { const t = today(); if (k === t) return '<span class="today">Hoy</span> · ' + esc(fDay.format(keyDate(k))); if (k === addDays(t, 1)) return 'Mañana · ' + esc(fDay.format(keyDate(k))); return esc(fDay.format(keyDate(k))); }
 function rel(ms) { const m = Math.round(Math.abs(ms) / 60000); if (m < 60) return m + ' min'; const h = Math.floor(m / 60), r = m % 60; if (h < 24) return h + ' h' + (r ? ' ' + r + ' min' : ''); const d = Math.round(h / 24); return d + (d === 1 ? ' día' : ' días'); }
+/** "Hoy" / "Mañana" / "Domingo · 11 oct." para un instante. */
+function whenLabel(d) {
+  const k = dayKey(d), t = today();
+  const day = k === t ? 'Hoy' : k === addDays(t, 1) ? 'Mañana' : cap(fDay.format(d));
+  return day + ' · ' + fTime.format(d);
+}
 
 /* ---------- API ---------- */
 // Los errores tienen la forma { code, message, provider }. Códigos propios del cliente:
@@ -145,28 +153,94 @@ function taskLabel(x) {
 
 function tasksVisible() { return S.tt.items.filter(x => !done.has(x.id)); }
 
+// Estado solo de la vista: eventos abiertos/cerrados a mano y si se ven los terminados de hoy.
+const evOpen = new Map();
+let showPast = false;
+const CHECK_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function dayHeader(k, extra = '') {
+  const t = today(), d = keyDate(k);
+  const isToday = k === t;
+  const name = isToday ? 'Hoy' : k === addDays(t, 1) ? 'Mañana' : fWeekday.format(d);
+  const date = isToday || k === addDays(t, 1) ? fDay.format(d) : fDayMon.format(d);
+  return `<h3 class="day-h${isToday ? ' today' : ''}"><span class="dname">${esc(name)}</span><span class="ddate">${esc(date)}</span>${extra}</h3>`;
+}
+
+/** Evento destacado: el que está en curso o, si no hay, el siguiente. */
+function featured() {
+  const now = Date.now(), timed = S.cal.items.filter(e => !e.allDay);
+  const cur = timed.find(e => e.start <= now && e.end > now) || null;
+  const nxt = timed.find(e => e.start > now) || null;
+  return { cur, nxt, main: cur || nxt };
+}
+
+/* ---------- agenda ---------- */
+function evRow(e, mainId, now) {
+  const isNow = e.start <= now && e.end > now, past = e.end <= now;
+  const open = evOpen.has(e.id) ? evOpen.get(e.id) : (e.id === mainId && !!e.desc);
+  const more = open && (e.desc || e.link)
+    ? `<div class="more">${e.desc ? `<p class="d">${esc(e.desc)}</p>` : ''}${e.link ? `<a href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Abrir en Google Calendar ↗</a>` : ''}</div>`
+    : '';
+  return `<li class="ev${isNow ? ' now' : ''}${past && !isNow ? ' past' : ''}${open ? ' open' : ''}">
+    <button type="button" class="row-main" data-ev="${esc(e.id)}" aria-expanded="${open}">
+      <span class="when"><b>${fTime.format(e.start)}</b><span>${fTime.format(e.end)}</span></span>
+      <span class="t">${esc(e.title)}${isNow ? '<span class="live">Ahora</span>' : ''}</span>
+      <span class="chev" aria-hidden="true">▾</span>
+    </button>${more}</li>`;
+}
+
 function renderCal() {
   const s = S.cal, body = $('cal-body');
   if (s.status === 'loading' && !s.at) { body.innerHTML = skeleton(); return; }
   if (s.status === 'error') { body.innerHTML = errorBox(CAL, s.err); return; }
-  const now = Date.now(), groups = new Map();
+  const now = Date.now(), t = today(), mainId = featured().main?.id, groups = new Map();
   for (const e of s.items) { if (!groups.has(e.key)) groups.set(e.key, []); groups.get(e.key).push(e); }
   let h = s.status === 'stale' ? errorBox(CAL, s.err) : '';
   if (!groups.size) { body.innerHTML = h + '<div class="empty">No hay eventos en los próximos 7 días.</div>'; return; }
   for (const [k, evs] of groups) {
-    h += `<div class="day"><h3>${dayLabel(k)}</h3><ul class="list">`;
-    for (const e of evs) {
-      const isNow = !e.allDay && e.start <= now && e.end > now, past = e.end <= now;
-      const when = e.allDay ? 'Todo el día' : `${fTime.format(e.start)}–${fTime.format(e.end)}`;
-      h += `<li class="item${isNow ? ' now' : ''}${past && !isNow ? ' past' : ''}"><span class="when mono">${when}</span><div class="body">
-        <span class="t">${esc(e.title)}</span>${isNow ? '<span class="meta"><span class="chip">En curso</span></span>' : ''}
-        ${e.desc ? `<span class="d">${esc(e.desc)}</span>` : ''}
-        ${e.link ? `<a href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Abrir en Calendar</a>` : ''}
-      </div></li>`;
+    const allDay = evs.filter(e => e.allDay), timed = evs.filter(e => !e.allDay);
+    const past = k === t ? timed.filter(e => e.end <= now) : [];
+    const rest = timed.filter(e => !past.includes(e));
+    h += `<div class="day">${dayHeader(k)}`;
+    if (allDay.length) {
+      h += '<div class="allday">' + allDay.map(e => e.link
+        ? `<a class="chip" href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Todo el día · ${esc(e.title)}</a>`
+        : `<span class="chip">Todo el día · ${esc(e.title)}</span>`).join('') + '</div>';
     }
-    h += '</ul></div>';
+    if (past.length || rest.length) {
+      h += '<ul class="rows">';
+      if (past.length) {
+        const n = past.length;
+        h += `<li><button type="button" class="past-toggle" data-toggle-past aria-expanded="${showPast}">${showPast ? 'Ocultar' : 'Mostrar'} ${n === 1 ? '1 evento terminado' : n + ' eventos terminados'}</button></li>`;
+        if (showPast) h += past.map(e => evRow(e, mainId, now)).join('');
+      }
+      h += rest.map(e => evRow(e, mainId, now)).join('');
+      h += '</ul>';
+    }
+    h += '</div>';
   }
   body.innerHTML = h;
+}
+
+/* ---------- tareas ---------- */
+function taskRow(x, g) {
+  const now = Date.now();
+  const pr = { 5: 'alta', 3: 'media', 1: 'baja' }[x.priority];
+  const time = x.due && !x.allDay ? fTime.format(x.due) : '';
+  const over = g === 'over' && x.due ? `<span class="chip crit">hace ${rel(now - x.due)}</span>` : '';
+  const tag = taskLabel(x), busy = pending.has(x.id), isArmed = armed === x.id, note = notes.get(x.id);
+  return `<li class="task p${x.priority}${isArmed ? ' armed' : ''}">
+    <button type="button" class="check" data-done="${esc(x.id)}" data-project="${esc(x.projectId)}" aria-label="${isArmed ? 'Confirmar: marcar como hecha' : 'Marcar como hecha'}: ${esc(x.title)}"${busy ? ' disabled' : ''}>${CHECK_SVG}</button>
+    <div class="body">
+      <span class="t">${esc(x.title)}</span>
+      <span class="meta">${over}${tag ? `<span class="chip">${esc(tag)}</span>` : ''}${time ? `<span class="mono">${time}</span>` : ''}${x.repeat ? '<span>↻ se repite</span>' : ''}${pr ? `<span class="sr">Prioridad ${pr}</span>` : ''}</span>
+      ${x.note ? `<span class="d">${esc(x.note)}</span>` : ''}
+      ${isArmed ? '<span class="confirm">¿Hecha? Toca el círculo otra vez para confirmar</span>' : ''}
+      ${busy ? '<span class="msg">Marcando…</span>' : ''}
+      ${note ? `<span class="msg ${note.ok ? 'good' : 'bad'}">${esc(note.t)}</span>` : ''}
+    </div>
+    <a class="ext" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir en TickTick" title="Abrir en TickTick">↗</a>
+  </li>`;
 }
 
 function renderTT() {
@@ -176,77 +250,93 @@ function renderTT() {
   const t = today(), items = tasksVisible();
   let h = s.status === 'stale' ? errorBox(TT, s.err) : '';
   const gone = [...notes].filter(([id, n]) => n.ok && done.has(id));
-  if (gone.length) h += `<div class="msg good">${gone.length === 1 ? '1 tarea marcada' : gone.length + ' tareas marcadas'} como hecha${gone.length === 1 ? '' : 's'} en TickTick.</div>`;
+  if (gone.length) h += `<div class="done-note">✓ ${gone.length === 1 ? '1 tarea marcada' : gone.length + ' tareas marcadas'} como hecha${gone.length === 1 ? '' : 's'} en TickTick.</div>`;
   if (!items.length) { body.innerHTML = h + '<div class="empty">Nada pendiente para los próximos 7 días ni vencido.</div>'; return; }
   const groups = new Map();
   for (const x of items) { const g = !x.key ? 'sin' : x.key < t ? 'over' : x.key; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(x); }
   for (const [g, xs] of groups) {
-    const label = g === 'over' ? '<span class="over">Vencidas</span>' : g === 'sin' ? 'Sin fecha' : dayLabel(g);
-    h += `<div class="day"><h3>${label}</h3><ul class="list">`;
-    for (const x of xs) {
-      const pr = { 5: 'Alta', 3: 'Media', 1: 'Baja' }[x.priority];
-      const time = x.due && !x.allDay ? fTime.format(x.due) : '';
-      const over = g === 'over' && x.due ? `<span class="chip crit">Hace ${rel(Date.now() - x.due)}</span>` : '';
-      const tag = taskLabel(x);
-      const busy = pending.has(x.id);
-      h += `<li class="item task p${x.priority}"><span class="stripe" aria-hidden="true"></span><div class="body">
-        <span class="t">${esc(x.title)}</span>
-        <span class="meta">${over}${tag ? `<span class="chip">${esc(tag)}</span>` : ''}${pr ? `<span>Prioridad ${pr}</span>` : ''}${time ? `<span class="mono">${time}</span>` : ''}${x.repeat ? '<span>Se repite</span>' : ''}</span>
-        ${x.note ? `<span class="d">${esc(x.note)}</span>` : ''}
-        <span class="actions"><button type="button" class="done${armed === x.id ? ' arm' : ''}" data-done="${esc(x.id)}" data-project="${esc(x.projectId)}"${busy ? ' disabled' : ''}>${busy ? 'Marcando…' : armed === x.id ? '¿Confirmar?' : 'Hecha'}</button><a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">Abrir en TickTick</a>${notes.has(x.id) ? `<span class="msg ${notes.get(x.id).ok ? 'good' : 'bad'}">${esc(notes.get(x.id).t)}</span>` : ''}</span>
-      </div></li>`;
-    }
-    h += '</ul></div>';
+    const badge = `<span class="count-badge">${xs.length}</span>`;
+    const head = g === 'over' ? `<h3 class="day-h"><span class="dname over">Vencidas</span>${badge}</h3>`
+      : g === 'sin' ? `<h3 class="day-h"><span class="dname">Sin fecha</span>${badge}</h3>`
+      : dayHeader(g, badge);
+    h += `<div class="day">${head}<ul class="rows">${xs.map(x => taskRow(x, g)).join('')}</ul></div>`;
   }
   body.innerHTML = h;
 }
 
-function renderTiles() {
+/* ---------- resumen ---------- */
+function renderHero() {
+  const el = $('tile-next'), s = S.cal;
+  if (s.status === 'loading' && !s.at) { el.innerHTML = '<span class="eyebrow">Ahora</span><div class="skel"></div>'; return; }
+  if (s.status === 'error') { el.innerHTML = '<span class="eyebrow">Ahora</span>' + errorBox(CAL, s.err); return; }
   const now = Date.now(), t = today();
-  // Ahora / siguiente
-  let nh = '<span class="eyebrow">Ahora / siguiente</span>';
-  if (S.cal.status === 'loading' && !S.cal.at) nh += '<span class="muted">Cargando agenda…</span>';
-  else if (S.cal.status === 'error') nh += '<span class="muted">Sin datos de calendario.</span>';
-  else {
-    const timed = S.cal.items.filter(e => !e.allDay);
-    const cur = timed.find(e => e.start <= now && e.end > now);
-    const nxt = timed.find(e => e.start > now);
-    if (cur) nh += `<span class="big">${esc(cur.title)}</span><span class="muted">En curso · termina a las <span class="mono">${fTime.format(cur.end)}</span> · quedan ${rel(cur.end - now)}</span>`;
-    if (nxt) nh += `${cur ? '<span class="muted">Luego: ' : '<span class="big">' + esc(nxt.title) + '</span><span class="muted">'}${cur ? esc(nxt.title) + ' · ' : ''}${dayKey(nxt.start) === t ? 'hoy' : esc(fDay.format(nxt.start))} <span class="mono">${fTime.format(nxt.start)}</span> · en ${rel(nxt.start - now)}</span>`;
-    if (!cur && !nxt) nh += '<span class="muted">Nada más agendado esta semana.</span>';
+  const { cur, nxt, main } = featured();
+  const allDayToday = s.items.filter(e => e.allDay && e.key === t);
+  let h = '';
+  if (cur) {
+    const pct = Math.min(100, Math.max(0, Math.round((now - cur.start) / (cur.end - cur.start) * 100)));
+    h += `<div class="hero-top"><span class="pill"><span class="dot" aria-hidden="true"></span>Ahora</span><span class="hero-when mono">${fTime.format(cur.start)}–${fTime.format(cur.end)}</span></div>
+      <h2 class="hero-title">${esc(cur.title)}</h2>${cur.desc ? `<p class="hero-desc">${esc(cur.desc)}</p>` : ''}
+      <progress max="100" value="${pct}" aria-label="Avance del evento: ${pct} %"></progress>
+      <div class="hero-count"><span class="big">${rel(cur.end - now)}</span><span class="muted">para terminar</span></div>`;
+  } else if (nxt) {
+    h += `<div class="hero-top"><span class="pill">Siguiente</span><span class="hero-when">${esc(whenLabel(nxt.start))}</span></div>
+      <h2 class="hero-title">${esc(nxt.title)}</h2>${nxt.desc ? `<p class="hero-desc">${esc(nxt.desc)}</p>` : ''}
+      <div class="hero-count"><span class="big">en ${rel(nxt.start - now)}</span></div>`;
+  } else {
+    h += '<div class="hero-top"><span class="pill">Agenda</span></div><p class="msg-empty">Nada más agendado esta semana.</p>';
   }
-  $('tile-next').innerHTML = nh;
+  if (allDayToday.length) h += '<div class="hero-allday">' + allDayToday.map(e => `<span>Todo el día · ${esc(e.title)}</span>`).join('') + '</div>';
+  if (main) {
+    const later = s.items.filter(e => !e.allDay && e !== main && e.start > now && dayKey(e.start) === t).slice(0, 4);
+    if (later.length) {
+      h += `<div class="later"><span class="eyebrow">${cur ? 'Después, hoy' : 'Más tarde, hoy'}</span><ul>`
+        + later.map(e => `<li><span class="mono">${fTime.format(e.start)}</span><span>${esc(e.title)}</span></li>`).join('') + '</ul></div>';
+    } else if (dayKey(main.start) === t) {
+      h += `<div class="later"><p>Es lo último de hoy.${cur && nxt ? ` Luego: ${esc(whenLabel(nxt.start))} · ${esc(nxt.title)}` : ''}</p></div>`;
+    } else {
+      h += '<div class="later"><p>Hoy ya no queda nada en la agenda.</p></div>';
+    }
+  }
+  if (s.status === 'stale') h += `<span class="muted">Sin actualizar desde ${fTime.format(new Date(s.at))}</span>`;
+  el.innerHTML = h;
+}
 
-  // Conteo de tareas
-  const items = tasksVisible();
-  const over = items.filter(x => x.key && x.key < t).length, tod = items.filter(x => x.key === t).length, wk = items.filter(x => x.key && x.key > t).length;
-  let th = '<span class="eyebrow">Tareas pendientes</span>';
-  if (S.tt.status === 'loading' && !S.tt.at) th += '<span class="muted">Cargando TickTick…</span>';
-  else if (S.tt.status === 'error') th += '<span class="muted">Sin datos de TickTick.</span>';
-  else th += `<div class="counts"><div class="count"><span class="n${over ? ' crit' : ''}">${over}</span><span class="l">vencidas</span></div><div class="count"><span class="n${tod ? ' warn' : ''}">${tod}</span><span class="l">para hoy</span></div><div class="count"><span class="n">${wk}</span><span class="l">resto de la semana</span></div></div>`;
-  $('tile-tasks').innerHTML = th;
+function renderCounts() {
+  const t = today(), items = tasksVisible();
+  let h = '<span class="eyebrow">Tareas pendientes</span>';
+  if (S.tt.status === 'loading' && !S.tt.at) h += '<span class="muted">Cargando TickTick…</span>';
+  else if (S.tt.status === 'error') h += '<span class="muted">Sin datos de TickTick.</span>';
+  else {
+    const over = items.filter(x => x.key && x.key < t).length, tod = items.filter(x => x.key === t).length, wk = items.filter(x => x.key && x.key > t).length;
+    h += `<div class="counts"><div class="count${over ? ' crit' : ''}"><span class="n">${over}</span><span class="l">vencidas</span></div><div class="count${tod ? ' warn' : ''}"><span class="n">${tod}</span><span class="l">para hoy</span></div><div class="count"><span class="n">${wk}</span><span class="l">esta semana</span></div></div>`;
+  }
+  $('tile-tasks').innerHTML = h;
+}
 
-  // Evaluaciones
-  let eh = '<span class="eyebrow">Próximas evaluaciones</span>';
-  const ev = S.ev;
-  if (ev.status === 'loading' && !ev.at) eh += '<span class="muted">Cargando…</span>';
-  else if (ev.status === 'error') eh += errorBox(TT, ev.err);
+function renderExams() {
+  const t = today(), ev = S.ev;
+  let h = '<span class="eyebrow">Próximas evaluaciones</span>';
+  if (ev.status === 'loading' && !ev.at) h += '<span class="muted">Cargando…</span>';
+  else if (ev.status === 'error') h += errorBox(TT, ev.err);
   else {
     const list = ev.items.filter(x => x.key && x.key >= t && !done.has(x.id));
-    if (!list.length) eh += '<span class="muted">Nada en los próximos 70 días. Las tareas de TickTick que empiezan con PC, Parcial, Examen, Entrega o Actividad calificada aparecen aquí.</span>';
+    if (!list.length) h += '<span class="muted">Nada en los próximos 70 días. Las tareas de TickTick que empiezan con PC, Parcial, Examen, Entrega o Actividad calificada aparecen aquí.</span>';
     else {
-      eh += '<ul class="exams">';
+      h += '<ul class="exams">';
       for (const x of list) {
         const d = Math.round((keyDate(x.key) - keyDate(t)) / 864e5);
-        const lbl = d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${d} días`;
+        const num = d === 0 ? '<b>Hoy</b>' : `<b>${d}</b><small>${d === 1 ? 'día' : 'días'}</small>`;
+        const urg = d <= 3 ? ' u-crit' : d <= 7 ? ' u-warn' : '';
         const when = esc(fDay.format(x.due)) + (x.allDay ? '' : ' · ' + fTime.format(x.due));
-        eh += `<li class="exam"><span class="nm">${esc(x.name)}</span><span class="dd${d <= 7 ? ' soon' : ''}">${lbl}</span><span class="sub">${taskLabel(x) ? esc(taskLabel(x)) + ' · ' : ''}${when}</span></li>`;
+        const lbl = taskLabel(x);
+        h += `<li class="exam${urg}"><span class="days" aria-label="${d === 0 ? 'hoy' : 'en ' + d + (d === 1 ? ' día' : ' días')}">${num}</span><span class="info"><span class="nm">${esc(x.name)}</span><span class="sub">${lbl ? esc(lbl) + ' · ' : ''}${when}</span></span></li>`;
       }
-      eh += '</ul>';
+      h += '</ul>';
     }
-    if (ev.status === 'stale') eh += '<span class="fresh stale">Sin actualizar desde ' + fTime.format(new Date(ev.at)) + '</span>';
+    if (ev.status === 'stale') h += '<span class="fresh stale">Sin actualizar desde ' + fTime.format(new Date(ev.at)) + '</span>';
   }
-  $('tile-exams').innerHTML = eh;
+  $('tile-exams').innerHTML = h;
 }
 
 function renderBanner() {
@@ -262,9 +352,13 @@ function renderBanner() {
   } else b.hidden = true;
 }
 
+function renderDate() {
+  const d = new Date();
+  $('today-label').innerHTML = `${esc(cap(fWeekday.format(d)))} <span class="dnum">${esc(fDayNum.format(d))}</span><span class="mon">de ${esc(fMonth.format(d).toLocaleLowerCase('es'))}</span>`;
+}
+
 function render() {
-  $('today-label').textContent = cap(fLong.format(new Date()));
-  renderBanner(); renderTiles(); renderCal(); renderTT();
+  renderDate(); renderBanner(); renderHero(); renderCounts(); renderExams(); renderCal(); renderTT();
   setFresh($('fresh-cal'), freshText(S.cal));
   setFresh($('fresh-tt'), freshText(S.tt, S.ev));
   const gs = $('global-status');
@@ -286,6 +380,19 @@ document.addEventListener('click', ev => {
     }
     armed = null; clearTimeout(armTimer); completeTask(id, b.dataset.project); return;
   }
+  const r = ev.target.closest('[data-ev]');
+  if (r) {
+    const id = r.dataset.ev;
+    evOpen.set(id, r.getAttribute('aria-expanded') !== 'true');
+    render();
+    document.querySelector(`[data-ev="${CSS.escape(id)}"]`)?.focus();
+    return;
+  }
+  if (ev.target.closest('[data-toggle-past]')) {
+    showPast = !showPast; render();
+    document.querySelector('[data-toggle-past]')?.focus();
+    return;
+  }
   if (ev.target.closest('[data-reload]')) location.reload();
 });
 $('refresh-btn').addEventListener('click', refreshAll);
@@ -295,7 +402,10 @@ setInterval(refreshAll, REFRESH);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && Date.now() - lastRefresh > REFRESH) refreshAll();
 });
-setInterval(() => { if (loadedDay && today() !== loadedDay) refreshAll(); else render(); }, 60000);
+setInterval(() => {
+  if (loadedDay && today() !== loadedDay) { evOpen.clear(); showPast = false; refreshAll(); }
+  else render();
+}, 60000);
 
 // Aviso tras conectar una cuenta por OAuth (/?connected=google|ticktick).
 const params = new URLSearchParams(location.search);

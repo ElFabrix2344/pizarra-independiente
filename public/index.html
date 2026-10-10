@@ -20,32 +20,32 @@
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <div class="hgroup">
-      <span class="eyebrow" id="today-label">—</span>
-      <h1>Pizarra semanal</h1>
+  <header class="top">
+    <div class="date">
+      <span class="eyebrow">Pizarra semanal</span>
+      <h1 id="today-label">—</h1>
     </div>
     <div class="hactions">
       <span class="fresh" id="global-status">Cargando…</span>
-      <button id="refresh-btn" type="button">Actualizar</button>
+      <button id="refresh-btn" type="button"><span class="ico" aria-hidden="true">↻</span>Actualizar</button>
     </div>
   </header>
 
   <div class="banner" id="banner" hidden></div>
 
   <div class="summary">
-    <div class="tile focus" id="tile-next"></div>
-    <div class="tile" id="tile-tasks"></div>
-    <div class="tile" id="tile-exams"></div>
+    <section class="hero" id="tile-next" aria-label="Ahora y siguiente"></section>
+    <section class="tile" id="tile-tasks" aria-label="Tareas pendientes"></section>
+    <section class="tile" id="tile-exams" aria-label="Próximas evaluaciones"></section>
   </div>
 
   <div class="cols">
     <section class="panel" aria-labelledby="h-cal">
-      <div class="phead"><h2 id="h-cal">Agenda · 7 días</h2><span class="fresh" id="fresh-cal"></span></div>
+      <div class="phead"><h2 id="h-cal">Agenda<small>7 días</small></h2><span class="fresh" id="fresh-cal"></span></div>
       <div id="cal-body"></div>
     </section>
     <section class="panel" aria-labelledby="h-tt">
-      <div class="phead"><h2 id="h-tt">Tareas TickTick</h2><span class="fresh" id="fresh-tt"></span></div>
+      <div class="phead"><h2 id="h-tt">Tareas<small>TickTick</small></h2><span class="fresh" id="fresh-tt"></span></div>
       <div id="tt-body"></div>
     </section>
   </div>
