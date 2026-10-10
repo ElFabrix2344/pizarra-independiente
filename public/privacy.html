@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Política de privacidad · Pizarra semanal</title>
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<main class="wrap simple">
+  <h1>Política de privacidad</h1>
+  <p class="muted">Pizarra semanal · última actualización: 9 de octubre de 2026</p>
+
+  <h2>Qué es</h2>
+  <p>Pizarra semanal es un panel de uso personal para una sola persona, su propietario. Solo pueden abrirlo las cuentas autorizadas mediante Cloudflare Access.</p>
+
+  <h2>Qué datos usa</h2>
+  <ul>
+    <li><b>Google Calendar</b> (permiso <code>calendar.readonly</code>): lee los eventos del calendario principal desde hoy hasta dentro de 7 días para mostrarlos en el panel. No crea, modifica ni borra eventos.</li>
+    <li><b>TickTick</b> (permisos <code>tasks:read</code> y <code>tasks:write</code>): lee las tareas pendientes y, solo cuando el usuario pulsa «Hecha» y confirma, marca esa tarea como completada.</li>
+  </ul>
+
+  <h2>Cómo se guardan</h2>
+  <p>Los eventos y tareas no se almacenan: se consultan en el momento y se muestran en el navegador. Lo único que se guarda son los tokens de acceso de Google y TickTick, cifrados (AES-GCM) en el almacenamiento de Cloudflare asociado a la app, para poder actualizar el panel sin volver a iniciar sesión.</p>
+
+  <h2>Con quién se comparten</h2>
+  <p>Con nadie. No hay publicidad, analítica ni venta de datos. Los datos solo viajan entre Google, TickTick, Cloudflare (que aloja la app) y el navegador del propietario. El uso de la información recibida de las API de Google cumple la <a href="https://developers.google.com/terms/api-services-user-data-policy">Política de datos de usuario de los servicios de API de Google</a>, incluidos los requisitos de uso limitado.</p>
+
+  <h2>Cómo revocar el acceso</h2>
+  <ul>
+    <li>Google: <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> → quitar el acceso de la app.</li>
+    <li>TickTick: Ajustes de la cuenta → aplicaciones autorizadas.</li>
+  </ul>
+  <p>Al revocarlo, los tokens guardados dejan de funcionar.</p>
+
+  <h2>Contacto</h2>
+  <p>El correo de asistencia que aparece en la pantalla de consentimiento de Google.</p>
+</main>
+</body>
+</html>
