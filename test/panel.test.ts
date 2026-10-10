@@ -115,3 +115,16 @@ describe('cifrado de tokens', () => {
     expect(await decryptString(enc, key)).toBe('secreto');
   });
 });
+
+describe('configCheck', () => {
+  it('valida formatos sin exponer secretos', async () => {
+    const { configCheck } = await import('../src/providers');
+    const ok = configCheck({ GOOGLE_CLIENT_ID: '123456789012-abc123def.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'GOCSPX-xyz' } as never);
+    expect(ok.googleClientIdFormatOk).toBe(true);
+    expect(ok.googleClientSecret).toEqual({ set: true, length: 10, formatOk: true });
+    expect(JSON.stringify(ok)).not.toContain('GOCSPX-xyz');
+    const swapped = configCheck({ GOOGLE_CLIENT_ID: 'GOCSPX-xyz', GOOGLE_CLIENT_SECRET: '1-a.apps.googleusercontent.com' } as never);
+    expect(swapped.googleClientIdLooksLikeSecret).toBe(true);
+    expect(swapped.googleClientSecret.formatOk).toBe(false);
+  });
+});

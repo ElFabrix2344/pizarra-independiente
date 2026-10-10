@@ -76,5 +76,24 @@ export async function connectionStatus(env: Env, url: URL) {
       source: ttValid ? 'oauth' : env.TICKTICK_API_TOKEN ? 'api_token' : null,
       expiresAt: tt?.expiresAt ? new Date(tt.expiresAt).toISOString() : null,
     },
+    config: configCheck(env),
+  };
+}
+
+/**
+ * Comprueba el formato de las credenciales sin revelar los secretos.
+ * El Client ID de Google es público (viaja en la URL de autorización), así que se muestra.
+ */
+export function configCheck(env: Env) {
+  const gid = env.GOOGLE_CLIENT_ID ?? '';
+  const gsec = env.GOOGLE_CLIENT_SECRET ?? '';
+  const describe = (v: string | undefined) => (v ? { set: true, length: v.length } : { set: false });
+  return {
+    googleClientId: gid || null,
+    googleClientIdFormatOk: /^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(gid),
+    googleClientIdLooksLikeSecret: gid.startsWith('GOCSPX-'),
+    googleClientSecret: { ...describe(gsec), formatOk: gsec.startsWith('GOCSPX-') },
+    ticktickClientId: describe(env.TICKTICK_CLIENT_ID),
+    ticktickClientSecret: describe(env.TICKTICK_CLIENT_SECRET),
   };
 }
