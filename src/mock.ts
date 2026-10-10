@@ -20,6 +20,7 @@ const projects: TickTickProject[] = [
 const columns = [
   { id: 'c-hacer', projectId: 'p-cursob', name: 'Por hacer' },
   { id: 'c-curso', projectId: 'p-cursob', name: 'En curso' },
+  { id: 'c-hee', projectId: 'inbox1234', name: 'HEE' },
 ];
 
 function tasks(now: Date): TickTickTask[] {
@@ -35,7 +36,7 @@ function tasks(now: Date): TickTickTask[] {
   return [
     allDay('t-old', 'p-cursoa', 'Tarea vencida hace 10 días (no debe salir)', addDays(t, -10), 5),
     allDay('t-over1', 'p-cursoa', 'Entregar resumen de lectura', addDays(t, -1), 5, { content: 'Ejemplo de tarea vencida.' }),
-    timed('t-over2', 'inbox1234', 'Responder correo del grupo', addDays(t, -3), 9, 1),
+    timed('t-over2', 'inbox1234', 'Responder correo del grupo', addDays(t, -3), 9, 1, { columnId: 'c-hee' }),
     timed('t-today1', 'p-cursob', 'Resolver práctica dirigida', t, 18, 3, { columnId: 'c-curso' }),
     allDay('t-today2', 'p-personal', 'Pagar recibo de luz', t, 1, { repeatFlag: 'RRULE:FREQ=MONTHLY;INTERVAL=1' }),
     allDay('t-today3', 'p-cursoa', 'Leer capítulo 3', t, 5),

@@ -137,6 +137,12 @@ function freshText(...ss) {
 function setFresh(el, f) { el.textContent = f.txt; el.classList.toggle('stale', f.stale); }
 function skeleton() { return '<div class="skel"></div><div class="skel"></div><div class="skel"></div>'; }
 
+// Etiqueta de lista/columna. En el inbox la columna (p. ej. el curso) es lo informativo.
+function taskLabel(x) {
+  if (x.column && x.projectId.startsWith('inbox')) return x.column;
+  return [x.list, x.column].filter(Boolean).join(' · ');
+}
+
 function tasksVisible() { return S.tt.items.filter(x => !done.has(x.id)); }
 
 function renderCal() {
@@ -181,7 +187,7 @@ function renderTT() {
       const pr = { 5: 'Alta', 3: 'Media', 1: 'Baja' }[x.priority];
       const time = x.due && !x.allDay ? fTime.format(x.due) : '';
       const over = g === 'over' && x.due ? `<span class="chip crit">Hace ${rel(Date.now() - x.due)}</span>` : '';
-      const tag = [x.list, x.column].filter(Boolean).join(' · ');
+      const tag = taskLabel(x);
       const busy = pending.has(x.id);
       h += `<li class="item task p${x.priority}"><span class="stripe" aria-hidden="true"></span><div class="body">
         <span class="t">${esc(x.title)}</span>
@@ -234,7 +240,7 @@ function renderTiles() {
         const d = Math.round((keyDate(x.key) - keyDate(t)) / 864e5);
         const lbl = d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${d} días`;
         const when = esc(fDay.format(x.due)) + (x.allDay ? '' : ' · ' + fTime.format(x.due));
-        eh += `<li class="exam"><span class="nm">${esc(x.name)}</span><span class="dd${d <= 7 ? ' soon' : ''}">${lbl}</span><span class="sub">${x.list ? esc(x.list) + ' · ' : ''}${when}</span></li>`;
+        eh += `<li class="exam"><span class="nm">${esc(x.name)}</span><span class="dd${d <= 7 ? ' soon' : ''}">${lbl}</span><span class="sub">${taskLabel(x) ? esc(taskLabel(x)) + ' · ' : ''}${when}</span></li>`;
       }
       eh += '</ul>';
     }
