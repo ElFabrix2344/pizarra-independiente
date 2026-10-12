@@ -1,4 +1,6 @@
-# Pizarra semanal
+# Bitácora
+
+> Antes «Pizarra semanal». El nombre técnico sigue siendo `pizarra-semanal` (Worker, URL y repo), así que los enlaces y la configuración no cambian.
 
 Panel personal que reúne la agenda de **Google Calendar** y las tareas de **TickTick**: la semana agrupada por día, el evento en curso o el siguiente con cuenta regresiva, las tareas vencidas, de hoy y de la semana, las próximas evaluaciones y un botón «Hecha» para completar tareas. Funciona en la laptop y en el celular (se puede instalar como app desde el navegador).
 
@@ -111,7 +113,7 @@ El Worker valida además el JWT de Access en cada petición (firma, `aud` e `iss
 
      | Campo | Valor |
      |---|---|
-     | Nombre de la app | `Pizarra semanal` |
+     | Nombre de la app | `Bitácora` |
      | Correo de asistencia | tu correo |
      | Logotipo | **vacío** (subir un logo obliga a verificar la marca) |
      | Página principal | `https://pizarra-semanal.<tu-subdominio>.workers.dev/` |
@@ -240,21 +242,21 @@ npm run typecheck
 - **Excepción**: si justo después viene un código de ciclo (`PC2 2026-I — …`, `Parcial 2025-2`, `PC1 26-1`), se entiende como material de un ciclo pasado para practicar y no se muestra.
 - Lo que la regla no detecte se oculta con ✕ (doble toque); «Restaurar» las vuelve a mostrar. La lista de ocultas vive en KV.
 
-## Cómo crear tareas para que la pizarra las lea bien
+## Cómo crear tareas para que Bitácora las lea bien
 
-Las tareas del ciclo (a partir de sílabos o cronogramas) se generan pidiéndoselas a un chat con el conector de TickTick. Para que la pizarra las clasifique bien, pásale estas reglas:
+Las tareas del ciclo (a partir de sílabos o cronogramas) se generan pidiéndoselas a un chat con el conector de TickTick. Para que Bitácora las clasifique bien, pásale estas reglas:
 
-> **Reglas para que las tareas se vean bien en mi pizarra:**
+> **Reglas para que las tareas se vean bien en mi Bitácora:**
 > - Cada tarea va en el **inbox**, en la **columna de su curso** (Estadística Aplicada, EPP, HEE, Pensamiento Social…).
 > - Las **evaluaciones reales** empiezan con la palabra clave y luego el curso: «PC2 EPP», «Parcial Aplicada», «Actividad 3 calificada PSC», «Trabajo final EFE», «Entrega 1 HEE», «Presentación … HEE».
 > - Las **tareas de preparación o práctica NO empiezan con esas palabras**: «Repasar para PC2 EPP», «Simulacro PC2 Aplicada», «Resolver PC2 2026-I (práctica)».
-> - Si el título tiene detalle, va después de « — »: «PC2 EPP — temas 4 a 6». La pizarra muestra solo lo que va antes.
+> - Si el título tiene detalle, va después de « — »: «PC2 EPP — temas 4 a 6». Bitácora muestra solo lo que va antes.
 > - Fecha de vencimiento siempre. Hora solo si importa; si no, de día completo.
 > - Prioridad: alta para evaluaciones, media para entregas y preparación, baja para lecturas.
 
 Por qué importa cada regla:
 
-| Regla | Qué hace la pizarra con ella |
+| Regla | Qué hace Bitácora con ella |
 |---|---|
 | Columna del curso | Etiqueta de la tarea, curso de las sesiones de estudio hechas desde esa tarea |
 | Palabra clave al inicio | Decide qué aparece en «Próximas evaluaciones» (ver [Evaluaciones](#evaluaciones)) |
@@ -266,7 +268,7 @@ Por qué importa cada regla:
 ## Horas de estudio
 
 - **Cursos** = columnas del inbox de TickTick (se excluyen «Personal» y «Not Sectioned»). Si agregas una columna, aparece sola. En «Agregar a mano · metas · sesiones» → **Cursos** puedes ocultar columnas (p. ej. de un ciclo anterior) y agregar cursos que no sean columnas. Las sesiones de un curso oculto siguen sumando al total, en «Otros», y su meta se conserva por si lo vuelves a mostrar.
-- **Registro**: el botón ▶ de la pizarra inicia un cronómetro (guardado en KV, así puedes empezar en el celular y parar en la laptop). Se puede **pausar y reanudar**: solo cuenta el tiempo activo, y la sesión se guarda con esa duración terminando a la hora en que paraste (no se usa `pauseDuration` de TickTick, cuya unidad no es fiable). Al parar se crea un registro de enfoque de TickTick (tipo cronómetro) con la nota `Pizarra · <curso>`. Menos de 1 minuto no se guarda; más de 12 h se recorta.
+- **Registro**: el botón ▶ de la app inicia un cronómetro (guardado en KV, así puedes empezar en el celular y parar en la laptop). Se puede **pausar y reanudar**: solo cuenta el tiempo activo, y la sesión se guarda con esa duración terminando a la hora en que paraste (no se usa `pauseDuration` de TickTick, cuya unidad no es fiable). Al parar se crea un registro de enfoque de TickTick (tipo cronómetro) con la nota `Bitácora · <curso>` (las creadas antes del cambio de nombre, `Pizarra · <curso>`, se siguen reconociendo). Menos de 1 minuto no se guarda; más de 12 h se recorta.
 - **Desde la app de TickTick**: los pomodoros o cronómetros iniciados sobre una tarea también cuentan; el curso sale de la columna de la tarea (o de su título). Sin tarea, van a «Otros».
 - **A mano**: curso, duración y día (hasta 60 días atrás).
 - **Metas**: horas por semana por curso, guardadas en KV. La semana va de lunes a domingo (hora de Lima).

@@ -1,5 +1,6 @@
 // Horas de estudio por curso, guardadas como registros de enfoque de TickTick.
-//  - El botón de la pizarra crea registros de tipo cronómetro con la nota "Pizarra · <curso>".
+//  - El botón de la app crea registros de tipo cronómetro con la nota "Bitácora · <curso>"
+//    (antes del cambio de nombre: "Pizarra · <curso>", que se sigue reconociendo).
 //  - Lo que se cronometre desde la app de TickTick también cuenta: el curso sale de la
 //    columna de la tarea asociada (o, si no, de su título).
 //  - Cursos = columnas del inbox de TickTick (menos "Personal" / "Not Sectioned").
@@ -16,7 +17,15 @@ import {
 import { ApiError } from '../lib/http';
 import { addDays, dayKeyInZone, endOfDay, startOfDay } from '../lib/time';
 
-export const NOTE_PREFIX = 'Pizarra · ';
+export const NOTE_PREFIX = 'Bitácora · ';
+/** Prefijos de antes del cambio de nombre: sus registros siguen contando como sesiones de la app. */
+const LEGACY_NOTE_PREFIXES = ['Pizarra · '];
+
+/** Prefijo de app con el que empieza la nota, o null si el registro no lo creó la app. */
+export function appNotePrefix(note: string | undefined): string | null {
+  if (!note) return null;
+  return [NOTE_PREFIX, ...LEGACY_NOTE_PREFIXES].find((p) => note.startsWith(p)) ?? null;
+}
 export const GENERAL = 'General';
 const EXCLUDED_COLUMNS = /^(not sectioned|sin secci[oó]n|personal|hecho|done)$/i;
 const MIN_SECONDS = 60;
@@ -117,10 +126,11 @@ export function focusSeconds(f: TickTickFocus): number {
 
 const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
-/** Curso escrito en la nota de un registro creado por la pizarra. */
+/** Curso escrito en la nota de un registro creado por la app. */
 export function courseFromNote(note: string | undefined, courses: string[]): string | null {
-  if (!note?.startsWith(NOTE_PREFIX)) return null;
-  const name = note.slice(NOTE_PREFIX.length).split(' · ')[0]!.trim();
+  const prefix = appNotePrefix(note);
+  if (!prefix) return null;
+  const name = note!.slice(prefix.length).split(' · ')[0]!.trim();
   return courses.find((c) => fold(c) === fold(name)) ?? (name || null);
 }
 
@@ -274,7 +284,7 @@ async function collectSessions(
     if (!start || start < from || start > to) continue;
     const seconds = focusSeconds(f);
     if (seconds <= 0) continue;
-    const fromPizarra = !!f.note?.startsWith(NOTE_PREFIX);
+    const fromPizarra = !!appNotePrefix(f.note);
     const course = fromPizarra
       ? courseFromNote(f.note, known)
       : await courseFromTask(client, f, { ...cat, courses: known }, budget);

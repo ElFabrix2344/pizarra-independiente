@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Pizarra semanal",
-  "short_name": "Pizarra",
-  "description": "Agenda de Google Calendar y tareas de TickTick de la semana.",
+  "name": "Bitácora",
+  "short_name": "Bitácora",
+  "description": "Agenda, tareas, evaluaciones y horas de estudio del ciclo (Google Calendar + TickTick).",
   "lang": "es",
   "start_url": "/",
   "scope": "/",

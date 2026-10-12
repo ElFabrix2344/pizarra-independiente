@@ -56,7 +56,7 @@ function focusStore(now: Date): MockFocus[] {
   focuses = [
     // Pomodoro desde la app de TickTick sobre una tarea de la columna HEE.
     mk(0, 300, 50, { taskId: 't-over2', tasks: [{ taskId: 't-over2', title: 'Responder correo del grupo' }] }),
-    // Sesión creada por la pizarra.
+    // Sesión creada por la app con el nombre anterior ("Pizarra · "): debe seguir contando.
     mk(1, 200, 90, { note: 'Pizarra · EPP' }),
     // Cronómetro de TickTick sin tarea: no se sabe el curso → "Otros".
     mk(1, 100, 25, { note: 'Estudio libre' }),
@@ -66,7 +66,7 @@ function focusStore(now: Date): MockFocus[] {
   for (let w = 1; w <= 9; w++) {
     courses.forEach((c, i) => {
       const minutes = ((w * 37 + i * 53) % 150) + 30;
-      focuses!.push(mk(1, w * 7 * 24 * 60 + i * 24 * 60, minutes, { note: 'Pizarra · ' + c }));
+      focuses!.push(mk(1, w * 7 * 24 * 60 + i * 24 * 60, minutes, { note: 'Bitácora · ' + c }));
     });
   }
   return focuses;

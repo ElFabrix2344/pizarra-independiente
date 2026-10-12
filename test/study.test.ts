@@ -53,7 +53,8 @@ describe('utilidades de estudio', () => {
   });
   it('curso desde la nota y desde el título', () => {
     const courses = ['Estadística Aplicada', 'EPP', 'HEE', 'Pensamiento Social', 'EFE'];
-    expect(courseFromNote('Pizarra · HEE', courses)).toBe('HEE');
+    expect(courseFromNote('Bitácora · HEE', courses)).toBe('HEE');
+    expect(courseFromNote('Pizarra · HEE', courses)).toBe('HEE'); // nombre anterior de la app
     expect(courseFromNote('Pizarra · estadistica aplicada · manual', courses)).toBe('Estadística Aplicada');
     expect(courseFromNote('otra cosa', courses)).toBeNull();
     expect(courseFromTitle('Lectura HEE — víspera de sesión lunes', courses)).toBe('HEE');

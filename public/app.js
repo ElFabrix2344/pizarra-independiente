@@ -490,7 +490,7 @@ function renderStudyMore(d) {
   const list = d.sessions.length
     ? '<ul class="sessions">' + d.sessions.map(x => {
       const key = x.type + '/' + x.id;
-      const src = x.source === 'pizarra' ? (x.label === 'manual' ? 'a mano' : 'pizarra') : 'TickTick · ' + x.label;
+      const src = x.source === 'pizarra' ? (x.label === 'manual' ? 'a mano' : 'Bitácora') : 'TickTick · ' + x.label;
       return `<li><span class="s-main">${esc(x.course || 'Otros')} · ${fmtMin(x.minutes)}</span><span class="s-sub">${esc(cap(fDayShort.format(new Date(x.start))))} · ${fTime.format(new Date(x.start))} · ${esc(src)}</span><button type="button" data-study-del="${esc(key)}" class="${studyArmed === key ? 'armed' : ''}">${studyArmed === key ? '¿Borrar?' : 'Borrar'}</button></li>`;
     }).join('') + '</ul>'
     : '<p class="hint">Aún no hay sesiones esta semana.</p>';
