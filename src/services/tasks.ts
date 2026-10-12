@@ -44,6 +44,19 @@ export type Strategy = 'undone' | 'scan';
 export const EVAL_RE =
   /^(PC\s?\d|PARCIAL|EXAMEN|Actividad\s+\d+\s+calificada|Trabajo\s+(final|grupal)|Entrega|\d+\S*\s+entrega|Presentaci[oó]n)/i;
 
+/**
+ * Código de ciclo justo después de la palabra clave ("PC2 2026-I", "Parcial 2025-2", "PC1 26-1"):
+ * indica material de un ciclo pasado para practicar, no una evaluación propia.
+ */
+const PAST_CYCLE_RE =
+  /^(PC\s?\d|PARCIAL|EXAMEN|Actividad\s+\d+\s+calificada|Trabajo\s+(final|grupal)|Entrega|Presentaci[oó]n)\s*[-–—:·]?\s*((19|20)\d{2}|\d{2})\s*[-–]\s*(I{1,2}|[12])\b/i;
+
+/** ¿El título es de una evaluación? Regex del panel original, sin los exámenes de ciclos pasados. */
+export function isEvaluationTitle(title: string): boolean {
+  const t = title.trim();
+  return EVAL_RE.test(t) && !PAST_CYCLE_RE.test(t);
+}
+
 export const OVERDUE_DAYS = 7;
 export const WEEK_DAYS = 7;
 export const EVAL_DAYS = 70;
@@ -233,12 +246,35 @@ export interface EvaluationsResult {
   timeZone: string;
   today: string;
   evaluations: PanelEvaluation[];
+  /** Evaluaciones de los próximos 70 días ocultadas a mano. */
+  ignoredCount: number;
+}
+
+// ---------- evaluaciones ocultas a mano (KV) ----------
+
+const K_EVAL_IGNORED = 'eval:ignored';
+const MAX_IGNORED = 200;
+
+export async function getIgnoredEvals(kv: KVNamespace): Promise<Set<string>> {
+  return new Set((await kv.get<string[]>(K_EVAL_IGNORED, 'json')) ?? []);
+}
+
+export async function ignoreEval(kv: KVNamespace, taskId: string) {
+  const list = [...(await getIgnoredEvals(kv))].filter((x) => x !== taskId);
+  list.push(taskId);
+  await kv.put(K_EVAL_IGNORED, JSON.stringify(list.slice(-MAX_IGNORED)));
+  return { ignored: taskId };
+}
+
+export async function restoreEvals(kv: KVNamespace) {
+  await kv.delete(K_EVAL_IGNORED);
+  return { ok: true };
 }
 
 /** Tareas de hoy a hoy+70 cuyo título parece una evaluación; las `limit` más cercanas. */
 export async function getEvaluations(
   client: TickTickClient,
-  opts: { now: Date; timeZone: string; strategy: Strategy; limit?: number },
+  opts: { now: Date; timeZone: string; strategy: Strategy; limit?: number; ignored?: Set<string> },
 ): Promise<EvaluationsResult> {
   const { now, timeZone: tz, strategy } = opts;
   const limit = opts.limit ?? EVAL_LIMIT;
@@ -249,8 +285,11 @@ export async function getEvaluations(
     const meta = await loadMeta(client, now.getTime());
     const raw = await fetchUndone(client, strategy, startOfDay(today, tz), endOfDay(lastDay, tz), meta);
     assertTaskArray(raw);
-    const evaluations = dedupe(raw)
-      .filter((t) => (t.status === undefined || t.status === 0) && EVAL_RE.test((t.title ?? '').trim()))
+    const ignored = opts.ignored ?? new Set<string>();
+    const candidates = dedupe(raw).filter((t) => (t.status === undefined || t.status === 0) && isEvaluationTitle(t.title ?? ''));
+    const ignoredCount = candidates.filter((t) => ignored.has(t.id)).length;
+    const evaluations = candidates
+      .filter((t) => !ignored.has(t.id))
       .map((t) => normalizeTask(t, { timeZone: tz, meta }))
       .filter((t) => t.dayKey !== null && t.dayKey >= today && t.dayKey <= lastDay)
       .sort((a, b) => (a.due ?? '').localeCompare(b.due ?? ''))
@@ -260,7 +299,7 @@ export async function getEvaluations(
         name: t.title.split(' — ')[0]!.trim(),
         daysUntil: daysBetween(today, t.dayKey!),
       }));
-    return { generatedAt: now.toISOString(), timeZone: tz, today, evaluations };
+    return { generatedAt: now.toISOString(), timeZone: tz, today, evaluations, ignoredCount };
   });
 }
 

@@ -69,10 +69,12 @@ const S = {
 let loadedDay = null, lastRefresh = 0, armed = null, armTimer = null, flash = null;
 const done = new Set(), pending = new Map(), notes = new Map();
 
+let evIgnored = 0, evArmed = null, evArmTimer = null;
+const evHidden = new Set();
 const SOURCES = {
   cal: { path: '/api/calendar', pick: b => b.events.map(toEvent) },
   tt: { path: '/api/tasks', pick: b => b.tasks.map(toTask) },
-  ev: { path: '/api/evaluations', pick: b => b.evaluations.map(toTask) },
+  ev: { path: '/api/evaluations', pick: b => { evIgnored = b.ignoredCount || 0; return b.evaluations.map(toTask); } },
   st: { path: '/api/study', pick: b => b },
 };
 
@@ -331,7 +333,7 @@ function renderExams() {
   if (ev.status === 'loading' && !ev.at) h += '<span class="muted">Cargando…</span>';
   else if (ev.status === 'error') h += errorBox(TT, ev.err);
   else {
-    const list = ev.items.filter(x => x.key && x.key >= t && !done.has(x.id));
+    const list = ev.items.filter(x => x.key && x.key >= t && !done.has(x.id) && !evHidden.has(x.id));
     if (!list.length) h += '<span class="muted">Nada en los próximos 70 días. Las tareas de TickTick que empiezan con PC, Parcial, Examen, Entrega o Actividad calificada aparecen aquí.</span>';
     else {
       h += '<ul class="exams">';
@@ -341,10 +343,13 @@ function renderExams() {
         const urg = d <= 3 ? ' u-crit' : d <= 7 ? ' u-warn' : '';
         const when = esc(fDay.format(x.due)) + (x.allDay ? '' : ' · ' + fTime.format(x.due));
         const lbl = taskLabel(x);
-        h += `<li class="exam${urg}"><span class="days" aria-label="${d === 0 ? 'hoy' : 'en ' + d + (d === 1 ? ' día' : ' días')}">${num}</span><span class="info"><span class="nm">${esc(x.name)}</span><span class="sub">${lbl ? esc(lbl) + ' · ' : ''}${when}</span></span></li>`;
+        const armedX = evArmed === x.id;
+        h += `<li class="exam${urg}"><span class="days" aria-label="${d === 0 ? 'hoy' : 'en ' + d + (d === 1 ? ' día' : ' días')}">${num}</span><span class="info"><span class="nm">${esc(x.name)}</span><span class="sub">${lbl ? esc(lbl) + ' · ' : ''}${when}</span></span><button type="button" class="ex-x${armedX ? ' armed' : ''}" data-eval-ignore="${esc(x.id)}" title="No es una evaluación: ocultar" aria-label="${armedX ? 'Confirmar: ocultar' : 'Ocultar'} ${esc(x.name)}">${armedX ? '¿Ocultar?' : '✕'}</button></li>`;
       }
       h += '</ul>';
     }
+    const hiddenN = evIgnored + evHidden.size;
+    if (hiddenN) h += `<span class="ex-foot">${hiddenN === 1 ? '1 oculta' : hiddenN + ' ocultas'} · <button type="button" class="linkish" data-eval-restore>Restaurar</button></span>`;
     if (ev.status === 'stale') h += '<span class="fresh stale">Sin actualizar desde ' + fTime.format(new Date(ev.at)) + '</span>';
   }
   $('tile-exams').innerHTML = h;
@@ -792,6 +797,25 @@ document.addEventListener('click', ev => {
     return;
   }
   if (studyClick(ev)) return;
+  const ex = ev.target.closest('[data-eval-ignore]');
+  if (ex) {
+    const id = ex.dataset.evalIgnore;
+    if (evArmed !== id) {
+      evArmed = id; clearTimeout(evArmTimer); render();
+      evArmTimer = setTimeout(() => { evArmed = null; render(); }, 4000);
+      return;
+    }
+    evArmed = null; clearTimeout(evArmTimer);
+    evHidden.add(id); render();
+    api('/api/evaluations/ignore', { method: 'POST', headers: { 'X-Pizarra': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: id }) })
+      .then(() => load('ev')).catch(() => { evHidden.delete(id); }).finally(() => { evHidden.delete(id); render(); });
+    return;
+  }
+  if (ev.target.closest('[data-eval-restore]')) {
+    api('/api/evaluations/restore', { method: 'POST', headers: { 'X-Pizarra': '1' } })
+      .then(() => { evHidden.clear(); return load('ev'); }).finally(render);
+    return;
+  }
   const hit = ev.target.closest('#hist-chart .hit');
   if (hit) { setHover(histHover === Number(hit.dataset.i) ? null : Number(hit.dataset.i)); return; }
   if (histHover !== null && !ev.target.closest('#hist-chart')) setHover(null);

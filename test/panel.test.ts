@@ -164,3 +164,31 @@ describe('configCheck', () => {
     expect(swapped.googleClientSecret.formatOk).toBe(false);
   });
 });
+
+describe('evaluaciones: práctica de ciclos pasados y ocultas a mano', () => {
+  it('títulos reales: la práctica con código de ciclo no cuenta como evaluación', async () => {
+    const { isEvaluationTitle } = await import('../src/services/tasks');
+    const practica = [
+      'PC2 2026-I — P1 d–e (left_join, case_when, str_c, percentiles) — mar 20/10',
+      'PC2 2026-I — gráficos: P1 f–g y P2 e (ggplot2) — mié 28/10',
+      'PC2 2026-I — P1 a–c (read_dta, rename, filter, if_else, colapsar) — jue 15/10',
+      'Parcial 2025-2 resuelto',
+      'PC1 26-1 pasada',
+      'Examen 2024-II',
+    ];
+    const reales = ['PC2 EPP', 'PC3 EPP', 'Actividad 3 calificada PSC', 'Trabajo final EFE Presentaciones de Alto Impacto', 'Presentación Noticia trío 7 HEE', 'PC2 — Estadística Aplicada', 'Entrega 2026 informe'];
+    for (const t of practica) expect([t, isEvaluationTitle(t)]).toEqual([t, false]);
+    for (const t of reales) expect([t, isEvaluationTitle(t)]).toEqual([t, true]);
+    // Tareas que no empiezan con la palabra clave siguen fuera
+    expect(isEvaluationTitle('Aplicada: conseguir PC2 pasadas y confirmar reglas con Durán — jue 15/10')).toBe(false);
+    expect(isEvaluationTitle('Simulacro PC2 cronometrado (120 min) — sáb 31/10')).toBe(false);
+  });
+  it('las ocultas a mano no aparecen y se cuentan', async () => {
+    const all = await getEvaluations(client(), { now: new Date(), timeZone: TZ, strategy: 'undone' });
+    const hide = all.evaluations[0]!.id;
+    const r = await getEvaluations(client(), { now: new Date(), timeZone: TZ, strategy: 'undone', ignored: new Set([hide]) });
+    expect(r.evaluations.map((e) => e.id)).not.toContain(hide);
+    expect(r.ignoredCount).toBe(1);
+    expect(all.ignoredCount).toBe(0);
+  });
+});

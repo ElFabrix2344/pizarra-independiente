@@ -25,6 +25,7 @@ Todas las rutas exigen sesión de Cloudflare Access.
 | GET | `/api/calendar` | Eventos de tus calendarios (principal, clases, etc.), de hoy a +7 días |
 | GET | `/api/tasks` | Tareas de TickTick sin completar: vencidas (últimos 7 días), de hoy y de la semana |
 | GET | `/api/evaluations?limit=6` | Tareas de hoy a +70 días cuyo título es una evaluación (PC, Parcial, Examen, Entrega…) |
+| POST | `/api/evaluations/ignore` · `/restore` | Oculta una evaluación que no lo es (`{ "taskId" }`) o restaura todas |
 | POST | `/api/tasks/:projectId/:taskId/complete` | Marca la tarea como completada (requiere cabecera `X-Pizarra: 1` y mismo origen) |
 | GET | `/api/study` | Horas de estudio de la semana por curso, metas, cronómetro activo y sesiones |
 | POST | `/api/study/start` · `/pause` · `/resume` · `/stop` · `/cancel` | Cronómetro de estudio (`{ "course": "HEE" }` al empezar) |
@@ -232,6 +233,12 @@ npm run dev        # http://localhost:8787
 npm test           # pruebas
 npm run typecheck
 ```
+
+## Evaluaciones
+
+- Una tarea es evaluación si su título empieza con PC, Parcial, Examen, «Actividad N calificada», «Trabajo final/grupal», Entrega o Presentación (regla del panel original).
+- **Excepción**: si justo después viene un código de ciclo (`PC2 2026-I — …`, `Parcial 2025-2`, `PC1 26-1`), se entiende como material de un ciclo pasado para practicar y no se muestra.
+- Lo que la regla no detecte se oculta con ✕ (doble toque); «Restaurar» las vuelve a mostrar. La lista de ocultas vive en KV.
 
 ## Horas de estudio
 

@@ -144,6 +144,14 @@ header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:spac
 .exam .info{display:flex;flex-direction:column;min-width:0}
 .exam .nm{font-weight:600;overflow-wrap:anywhere;line-height:1.3}
 .exam .sub{font-size:.85rem;color:var(--muted)}
+.exam{grid-template-columns:52px 1fr auto}
+.ex-x{background:transparent;border:1px solid transparent;color:var(--muted);font-size:.8rem;padding:3px 7px;border-radius:8px;opacity:.55}
+.exam:hover .ex-x,.ex-x:focus-visible{opacity:1}
+.ex-x:hover{border-color:var(--line);color:var(--ink)}
+.ex-x.armed{opacity:1;background:var(--crit);border-color:var(--crit);color:#fff}
+.ex-foot{font-size:.82rem;color:var(--muted)}
+.linkish{background:none;border:0;padding:0;color:var(--ink);font-size:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+@media (hover:none){.ex-x{opacity:.8}}
 
 /* ---------- columnas ---------- */
 .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}

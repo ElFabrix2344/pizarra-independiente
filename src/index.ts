@@ -5,7 +5,7 @@ import { GoogleError } from './lib/google';
 import { handleOAuth } from './oauth';
 import { connectionStatus, getGoogleAccessToken, getTickTickClient } from './providers';
 import { getPanelCalendar } from './services/calendar';
-import { getEvaluations, getPanelTasks, ttCall, type Strategy } from './services/tasks';
+import { getEvaluations, getIgnoredEvals, getPanelTasks, ignoreEval, restoreEvals, ttCall, type Strategy } from './services/tasks';
 import {
   addManual,
   getHistory,
@@ -80,7 +80,8 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
       case '/api/evaluations': {
         const { client } = await getTickTickClient(env, url);
         const limit = clampInt(url.searchParams.get('limit'), 1, 50, 6);
-        return json(await getEvaluations(client, { now: new Date(), timeZone: tz, strategy, limit }));
+        const ignored = await getIgnoredEvals(env.TOKENS);
+        return json(await getEvaluations(client, { now: new Date(), timeZone: tz, strategy, limit, ignored }));
       }
 
       case '/api/calendar':
@@ -102,6 +103,17 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
   }
 
   if (p.startsWith('/api/study/')) return studyAction(req, env, url, tz);
+
+  // Ocultar una "evaluación" que no lo es (p. ej. una tarea de práctica) o restaurarlas todas.
+  if (p === '/api/evaluations/ignore' || p === '/api/evaluations/restore') {
+    if (req.method !== 'POST') throw new ApiError('bad_request', 405, 'Usa POST.');
+    assertSameOrigin(req, url);
+    if (p.endsWith('/restore')) return json(await restoreEvals(env.TOKENS));
+    const body = await readJson(req);
+    const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+    if (!ID_RE.test(taskId)) throw new ApiError('bad_request', 400, 'Identificador inválido.');
+    return json(await ignoreEval(env.TOKENS, taskId));
+  }
 
   const m = p.match(/^\/api\/tasks\/([^/]+)\/([^/]+)\/complete$/);
   if (m) {
