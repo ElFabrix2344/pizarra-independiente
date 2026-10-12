@@ -6,7 +6,7 @@ import { handleOAuth } from './oauth';
 import { connectionStatus, getGoogleAccessToken, getTickTickClient } from './providers';
 import { getPanelCalendar } from './services/calendar';
 import { getEvaluations, getPanelTasks, ttCall, type Strategy } from './services/tasks';
-import { addManual, getStudy, saveGoals, startStudy, stopStudy, StudyStore } from './services/study';
+import { addManual, getStudy, saveCourses, saveGoals, startStudy, stopStudy, StudyStore } from './services/study';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -116,7 +116,8 @@ async function studyAction(req: Request, env: Env, url: URL, tz: string): Promis
     await store.clearActive();
     return json({ ok: true });
   }
-  if (p === '/api/study/manual' && req.method === 'POST') return json(await ttCall(() => addManual(client, body, { now: new Date(), timeZone: tz })));
+  if (p === '/api/study/manual' && req.method === 'POST') return json(await ttCall(() => addManual(client, store, body, { now: new Date(), timeZone: tz })));
+  if (p === '/api/study/courses' && req.method === 'PUT') return json(await ttCall(() => saveCourses(client, store, body)));
   if (p === '/api/study/goals' && req.method === 'PUT') return json(await ttCall(() => saveGoals(client, store, body.goals)));
 
   const m = p.match(/^\/api\/study\/sessions\/([01])\/([^/]+)$/);

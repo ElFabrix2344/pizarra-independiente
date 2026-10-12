@@ -103,12 +103,12 @@ describe('cronómetro, manual y metas', () => {
   it('curso desconocido o duración inválida se rechazan', async () => {
     const store = new StudyStore(memKV());
     await expect(startStudy(client(), store, 'Química')).rejects.toMatchObject({ status: 400 });
-    await expect(addManual(client(), { course: 'HEE', minutes: 0 }, { now: new Date(), timeZone: TZ })).rejects.toMatchObject({ status: 400 });
-    await expect(addManual(client(), { course: 'HEE', minutes: 30, date: '2999-01-01' }, { now: new Date(), timeZone: TZ })).rejects.toMatchObject({ status: 400 });
+    await expect(addManual(client(), new StudyStore(memKV()), { course: 'HEE', minutes: 0 }, { now: new Date(), timeZone: TZ })).rejects.toMatchObject({ status: 400 });
+    await expect(addManual(client(), new StudyStore(memKV()), { course: 'HEE', minutes: 30, date: '2999-01-01' }, { now: new Date(), timeZone: TZ })).rejects.toMatchObject({ status: 400 });
   });
   it('sesión manual de hoy cuenta para el curso', async () => {
     const now = new Date();
-    const res = await addManual(client(), { course: 'Estadística Aplicada', minutes: 75 }, { now, timeZone: TZ });
+    const res = await addManual(client(), new StudyStore(memKV()), { course: 'Estadística Aplicada', minutes: 75 }, { now, timeZone: TZ });
     const r = await getStudy(client(), new StudyStore(memKV()), { now, timeZone: TZ });
     const s = r.sessions.find((x) => x.id === res.id)!;
     expect(s).toMatchObject({ course: 'Estadística Aplicada', minutes: 75, label: 'manual' });
@@ -121,5 +121,42 @@ describe('cronómetro, manual y metas', () => {
     expect(st.courses.find((c) => c.name === 'HEE')!.goalMinutes).toBe(300);
     expect(st.courses.find((c) => c.name === 'EPP')!.goalMinutes).toBeNull();
     expect(st.goalTotalMinutes).toBe(540);
+  });
+});
+
+describe('cursos visibles', () => {
+  it('ocultar columnas y agregar cursos propios', async () => {
+    const { saveCourses } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    const r = await saveCourses(client(), store, { hidden: ['epp'], extra: ['Inglés', ' Inglés ', 'Tesis  I'] });
+    expect(r.hidden).toEqual(['EPP']);
+    expect(r.extra).toEqual(['Inglés', 'Tesis I']);
+    expect(r.courses).toEqual(['Estadística Aplicada', 'HEE', 'Inglés', 'Tesis I']);
+
+    const st = await getStudy(client(), store, { now: new Date(), timeZone: TZ });
+    expect(st.courses.map((c) => c.name)).toEqual(['Estadística Aplicada', 'HEE', 'Inglés', 'Tesis I']);
+    expect(st.courseOptions.find((o) => o.name === 'EPP')).toEqual({ name: 'EPP', source: 'ticktick', visible: false });
+    // La sesión de EPP sigue sumando al total, pero en "Otros".
+    const sum = st.courses.reduce((a, c) => a + c.minutes, 0) + st.otherMinutes;
+    expect(sum).toBe(st.totalMinutes);
+
+    await expect(startStudy(client(), store, 'EPP')).rejects.toMatchObject({ status: 400 });
+    await expect(startStudy(client(), store, 'inglés')).resolves.toMatchObject({ active: { course: 'Inglés' } });
+  });
+  it('rechaza cursos extra que ya son columnas, "General" o demasiado largos', async () => {
+    const { saveCourses } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    await expect(saveCourses(client(), store, { extra: ['HEE'] })).rejects.toMatchObject({ status: 400 });
+    await expect(saveCourses(client(), store, { extra: ['general'] })).rejects.toMatchObject({ status: 400 });
+    await expect(saveCourses(client(), store, { extra: ['x'.repeat(41)] })).rejects.toMatchObject({ status: 400 });
+  });
+  it('las metas solo valen para cursos visibles y se conservan al cambiar cursos', async () => {
+    const { saveCourses } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    await saveGoals(client(), store, { HEE: 300, EPP: 120 });
+    await saveCourses(client(), store, { hidden: ['EPP'] });
+    expect((await store.getSettings()).goals).toEqual({ HEE: 300, EPP: 120 });
+    const r = await saveGoals(client(), store, { HEE: 240, EPP: 60 });
+    expect(r.goals).toEqual({ HEE: 240 });
   });
 });

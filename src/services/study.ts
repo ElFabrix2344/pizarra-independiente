@@ -32,6 +32,18 @@ export interface ActiveTimer {
 export interface StudySettings {
   /** minutos por semana, por curso */
   goals: Record<string, number>;
+  /** Columnas de TickTick que no se muestran como curso (p. ej. de un ciclo anterior). */
+  hidden: string[];
+  /** Cursos agregados a mano, que no son columnas de TickTick. */
+  extra: string[];
+}
+
+/** Cursos visibles: columnas de TickTick no ocultas + los agregados a mano. */
+export function visibleCourses(cat: { courses: string[] }, st: StudySettings): string[] {
+  const hidden = new Set(st.hidden.map(fold));
+  const fromCols = cat.courses.filter((c) => !hidden.has(fold(c)));
+  const extra = st.extra.filter((e) => !fromCols.some((c) => fold(c) === fold(e)));
+  return [...fromCols, ...extra];
 }
 
 const K_ACTIVE = 'study:active';
@@ -50,7 +62,7 @@ export class StudyStore {
   }
   async getSettings(): Promise<StudySettings> {
     const s = await this.kv.get<StudySettings>(K_SETTINGS, 'json');
-    return { goals: s?.goals ?? {} };
+    return { goals: s?.goals ?? {}, hidden: s?.hidden ?? [], extra: s?.extra ?? [] };
   }
   setSettings(s: StudySettings) {
     return this.kv.put(K_SETTINGS, JSON.stringify(s));
@@ -80,7 +92,7 @@ export function focusSeconds(f: TickTickFocus): number {
   return Math.max(0, Math.round((e.getTime() - s.getTime()) / 1000) - (f.pauseDuration ?? 0));
 }
 
-const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 /** Curso escrito en la nota de un registro creado por la pizarra. */
 export function courseFromNote(note: string | undefined, courses: string[]): string | null {
@@ -192,6 +204,8 @@ export interface StudyResult {
   goalTotalMinutes: number;
   active: ActiveTimer | null;
   sessions: StudySession[];
+  /** Todos los cursos posibles, para la configuración (columnas + agregados). */
+  courseOptions: Array<{ name: string; source: 'ticktick' | 'extra'; visible: boolean }>;
 }
 
 export async function getStudy(
@@ -213,6 +227,8 @@ export async function getStudy(
     ...timings.map((f) => ({ ...f, type: 1 as const })),
   ];
 
+  const visible = visibleCourses(cat, settings);
+  const known = [...new Set([...cat.courses, ...settings.extra])];
   const sessions: StudySession[] = [];
   for (const f of records) {
     const start = parseTickTickDate(f.startTime);
@@ -220,7 +236,7 @@ export async function getStudy(
     const seconds = focusSeconds(f);
     if (seconds <= 0) continue;
     const fromPizarra = !!f.note?.startsWith(NOTE_PREFIX);
-    const course = fromPizarra ? courseFromNote(f.note, cat.courses) : await courseFromTask(client, f, cat);
+    const course = fromPizarra ? courseFromNote(f.note, known) : await courseFromTask(client, f, { ...cat, courses: known });
     sessions.push({
       id: f.id,
       type: f.type,
@@ -237,10 +253,10 @@ export async function getStudy(
   const byCourse = new Map<string, number>();
   let other = 0;
   for (const s of sessions) {
-    if (s.course && cat.courses.includes(s.course)) byCourse.set(s.course, (byCourse.get(s.course) ?? 0) + s.minutes);
+    if (s.course && visible.includes(s.course)) byCourse.set(s.course, (byCourse.get(s.course) ?? 0) + s.minutes);
     else other += s.minutes;
   }
-  const courses = cat.courses.map((name) => ({
+  const courses = visible.map((name) => ({
     name,
     minutes: byCourse.get(name) ?? 0,
     goalMinutes: settings.goals[name] ?? null,
@@ -257,23 +273,27 @@ export async function getStudy(
     goalTotalMinutes: courses.reduce((a, c) => a + (c.goalMinutes ?? 0), 0),
     active,
     sessions,
+    courseOptions: [
+      ...cat.courses.map((name) => ({ name, source: 'ticktick' as const, visible: visible.includes(name) })),
+      ...settings.extra.map((name) => ({ name, source: 'extra' as const, visible: true })),
+    ],
   };
 }
 
 // ---------- acciones ----------
 
-async function validCourse(client: TickTickClient, course: unknown): Promise<string> {
+async function validCourse(client: TickTickClient, store: StudyStore, course: unknown): Promise<string> {
   if (typeof course !== 'string' || !course.trim()) throw new ApiError('bad_request', 400, 'Falta el curso.');
   const name = course.trim();
   if (name === GENERAL) return name;
-  const { courses } = await loadCourses(client);
+  const courses = visibleCourses(await loadCourses(client), await store.getSettings());
   const match = courses.find((c) => fold(c) === fold(name));
   if (!match) throw new ApiError('bad_request', 400, `Curso desconocido: ${name}`);
   return match;
 }
 
 export async function startStudy(client: TickTickClient, store: StudyStore, course: unknown, now = Date.now()) {
-  const name = await validCourse(client, course);
+  const name = await validCourse(client, store, course);
   const current = await store.getActive();
   if (current) throw new ApiError('bad_request', 409, `Ya hay un cronómetro en marcha (${current.course}).`);
   const active = { course: name, startedAt: now };
@@ -303,10 +323,11 @@ export async function stopStudy(client: TickTickClient, store: StudyStore, now =
 
 export async function addManual(
   client: TickTickClient,
+  store: StudyStore,
   body: { course?: unknown; minutes?: unknown; date?: unknown },
   opts: { now: Date; timeZone: string },
 ) {
-  const course = await validCourse(client, body.course);
+  const course = await validCourse(client, store, body.course);
   const minutes = Number(body.minutes);
   if (!Number.isFinite(minutes) || minutes < 1 || minutes > 12 * 60) {
     throw new ApiError('bad_request', 400, 'La duración debe estar entre 1 minuto y 12 horas.');
@@ -324,7 +345,8 @@ export async function addManual(
 
 export async function saveGoals(client: TickTickClient, store: StudyStore, goals: unknown) {
   if (!goals || typeof goals !== 'object') throw new ApiError('bad_request', 400, 'Metas inválidas.');
-  const { courses } = await loadCourses(client);
+  const settings = await store.getSettings();
+  const courses = visibleCourses(await loadCourses(client), settings);
   const clean: Record<string, number> = {};
   for (const [k, v] of Object.entries(goals as Record<string, unknown>)) {
     const name = courses.find((c) => fold(c) === fold(k));
@@ -332,6 +354,27 @@ export async function saveGoals(client: TickTickClient, store: StudyStore, goals
     if (!name || !Number.isFinite(n) || n <= 0) continue;
     clean[name] = Math.min(Math.round(n), 80 * 60);
   }
-  await store.setSettings({ goals: clean });
+  await store.setSettings({ ...settings, goals: clean });
   return { goals: clean };
+}
+
+/** Qué columnas ocultar y qué cursos extra agregar. Las metas de cursos que dejan de verse se conservan. */
+export async function saveCourses(client: TickTickClient, store: StudyStore, body: { hidden?: unknown; extra?: unknown }) {
+  const cat = await loadCourses(client);
+  const settings = await store.getSettings();
+  const hiddenIn = Array.isArray(body.hidden) ? body.hidden : [];
+  const hidden = cat.courses.filter((c) => hiddenIn.some((h) => typeof h === 'string' && fold(h) === fold(c)));
+  const extra: string[] = [];
+  for (const e of Array.isArray(body.extra) ? body.extra : []) {
+    if (typeof e !== 'string') continue;
+    const name = e.trim().replace(/\s+/g, ' ');
+    if (!name || name.length > 40) throw new ApiError('bad_request', 400, 'Cada curso debe tener entre 1 y 40 caracteres.');
+    if (fold(name) === fold(GENERAL)) throw new ApiError('bad_request', 400, '«General» ya existe.');
+    if (cat.courses.some((c) => fold(c) === fold(name))) throw new ApiError('bad_request', 400, `«${name}» ya es una columna de TickTick.`);
+    if (!extra.some((x) => fold(x) === fold(name))) extra.push(name);
+  }
+  if (extra.length > 15) throw new ApiError('bad_request', 400, 'Máximo 15 cursos agregados.');
+  const next = { ...settings, hidden, extra };
+  await store.setSettings(next);
+  return { hidden, extra, courses: visibleCourses(cat, next) };
 }

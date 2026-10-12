@@ -29,6 +29,7 @@ Todas las rutas exigen sesión de Cloudflare Access.
 | GET | `/api/study` | Horas de estudio de la semana por curso, metas, cronómetro activo y sesiones |
 | POST | `/api/study/start` · `/stop` · `/cancel` | Cronómetro de estudio (`{ "course": "HEE" }` al empezar) |
 | POST | `/api/study/manual` | Sesión a mano: `{ "course", "minutes", "date" }` |
+| PUT | `/api/study/courses` | Cursos visibles: `{ "hidden": ["EFE"], "extra": ["Inglés"] }` |
 | PUT | `/api/study/goals` | Metas semanales en minutos: `{ "goals": { "HEE": 300 } }` |
 | DELETE | `/api/study/sessions/:type/:id` | Borra un registro de enfoque (`type` 0 = pomodoro, 1 = cronómetro) |
 | GET | `/api/status` | Qué cuentas están conectadas y comprobación de formato de las credenciales (sin mostrar secretos) |
@@ -232,7 +233,7 @@ npm run typecheck
 
 ## Horas de estudio
 
-- **Cursos** = columnas del inbox de TickTick (se excluyen «Personal» y «Not Sectioned»). Si agregas una columna, aparece sola.
+- **Cursos** = columnas del inbox de TickTick (se excluyen «Personal» y «Not Sectioned»). Si agregas una columna, aparece sola. En «Agregar a mano · metas · sesiones» → **Cursos** puedes ocultar columnas (p. ej. de un ciclo anterior) y agregar cursos que no sean columnas. Las sesiones de un curso oculto siguen sumando al total, en «Otros», y su meta se conserva por si lo vuelves a mostrar.
 - **Registro**: el botón ▶ de la pizarra inicia un cronómetro (guardado en KV, así puedes empezar en el celular y parar en la laptop). Al parar se crea un registro de enfoque de TickTick (tipo cronómetro) con la nota `Pizarra · <curso>`. Menos de 1 minuto no se guarda; más de 12 h se recorta.
 - **Desde la app de TickTick**: los pomodoros o cronómetros iniciados sobre una tarea también cuentan; el curso sale de la columna de la tarea (o de su título). Sin tarea, van a «Otros».
 - **A mano**: curso, duración y día (hasta 60 días atrás).

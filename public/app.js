@@ -386,6 +386,7 @@ async function studyAction(path, method, body) {
     if (path.endsWith('/stop')) studyMsg = r.saved ? { ok: true, t: `Guardado: ${fmtMin(r.minutes)} de ${r.course}${r.capped ? ' (recortado a 12 h)' : ''}.` } : { ok: false, t: r.reason };
     else if (path.endsWith('/manual')) { studyMsg = { ok: true, t: `Sesión agregada: ${fmtMin(r.minutes)} de ${r.course}.` }; moreDirty = false; }
     else if (path.endsWith('/goals')) { studyMsg = { ok: true, t: 'Metas guardadas.' }; moreDirty = false; }
+    else if (path.endsWith('/courses')) { studyMsg = { ok: true, t: 'Cursos actualizados.' }; moreDirty = false; }
     else if (method === 'DELETE') studyMsg = { ok: true, t: 'Sesión borrada.' };
     return r;
   } catch (e) {
@@ -469,7 +470,13 @@ function renderStudyMore(d) {
       return `<li><span class="s-main">${esc(x.course || 'Otros')} · ${fmtMin(x.minutes)}</span><span class="s-sub">${esc(cap(fDayShort.format(new Date(x.start))))} · ${fTime.format(new Date(x.start))} · ${esc(src)}</span><button type="button" data-study-del="${esc(key)}" class="${studyArmed === key ? 'armed' : ''}">${studyArmed === key ? '¿Borrar?' : 'Borrar'}</button></li>`;
     }).join('') + '</ul>'
     : '<p class="hint">Aún no hay sesiones esta semana.</p>';
-  return manual + goals + `<div><h3>Sesiones de la semana</h3>${list}</div>`;
+  const opt = d.courseOptions || [];
+  const courses = `<form class="sform" data-study-form="courses"><h3>Cursos</h3>
+    <p class="hint">Salen de las columnas de tu inbox de TickTick. Desmarca los que no quieras ver (p. ej. de otro ciclo).</p>
+    ${opt.map(o => `<label class="check-row"><input type="checkbox" ${o.source === 'extra' ? 'data-course-extra' : 'data-course-col'}="${esc(o.name)}"${o.visible ? ' checked' : ''}> ${esc(o.name)}${o.source === 'extra' ? ' <span class="muted">· agregado</span>' : ''}</label>`).join('')}
+    <label>Agregar curso<input name="newCourse" maxlength="40" placeholder="Ej.: Inglés" autocomplete="off"></label>
+    <button type="submit">Guardar cursos</button></form>`;
+  return manual + goals + courses + `<div><h3>Sesiones de la semana</h3>${list}</div>`;
 }
 
 function armStudy(key) {
@@ -510,6 +517,13 @@ document.addEventListener('submit', ev => {
     if (minutes < 1) { studyMsg = { ok: false, t: 'Pon una duración de al menos 1 minuto.' }; render(); return; }
     moreRenderedAt = null;
     studyAction('/api/study/manual', 'POST', { course: f.course.value, minutes, date: f.date.value });
+  } else if (f.dataset.studyForm === 'courses') {
+    const hidden = [...f.querySelectorAll('[data-course-col]')].filter(i => !i.checked).map(i => i.dataset.courseCol);
+    const extra = [...f.querySelectorAll('[data-course-extra]')].filter(i => i.checked).map(i => i.dataset.courseExtra);
+    const nw = f.newCourse.value.trim();
+    if (nw) extra.push(nw);
+    moreRenderedAt = null;
+    studyAction('/api/study/courses', 'PUT', { hidden, extra });
   } else {
     const goals = {};
     f.querySelectorAll('[data-goal]').forEach(i => { const h = Number(i.value); if (h > 0) goals[i.dataset.goal] = Math.round(h * 60); });
