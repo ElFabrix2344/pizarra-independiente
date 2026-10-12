@@ -57,6 +57,7 @@ function tasks(now: Date): TickTickTask[] {
 
 interface MockEvent {
   id: string;
+  iCalUID?: string;
   status: string;
   summary: string;
   description?: string;
@@ -85,6 +86,22 @@ function events(now: Date): MockEvent[] {
       description: 'Ejemplo de descripción de dos líneas para ver cómo se corta el texto cuando es largo, con &amp; entidades HTML.',
     }),
     ev('ev-t6', 'Revisión semanal', at(addDays(t, 6), 19), at(addDays(t, 6), 19, 15)),
+  ];
+}
+
+/** Calendario de clases (otro calendario propio, como "UP 26-1"). */
+function classEvents(now: Date): MockEvent[] {
+  const t = dayKeyInZone(now, TZ);
+  const dt = (d: Date) => ({ dateTime: toRfc3339InZone(d, TZ), timeZone: TZ });
+  const cls = (id: string, summary: string, s: Date, e: Date, extra: Partial<MockEvent> = {}): MockEvent => ({
+    id, status: 'confirmed', summary, start: dt(s), end: dt(e), htmlLink: `https://www.google.com/calendar/event?eid=${id}`, ...extra,
+  });
+  return [
+    cls('cl-hee', '📜 HEE — Clase', at(t, 9, 30), at(t, 11, 20), { description: 'Historia Económica · Aula A-408' }),
+    cls('cl-est', '📊 Estadística — Clase', at(t, 18, 30), at(t, 21, 20)),
+    cls('cl-eval', '📈 EvalPriv — Clase', at(addDays(t, 1), 9, 30), at(addDays(t, 1), 12, 20)),
+    // Mismo evento que "Clase — Curso B" del calendario principal: debe salir una sola vez.
+    { ...cls('cl-dup', 'Clase — Curso B', at(addDays(t, 1), 11), at(addDays(t, 1), 12, 30)), iCalUID: 'ev-t1' },
   ];
 }
 
@@ -130,10 +147,27 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json(undefined, 404);
   }
 
-  if (url.host === 'www.googleapis.com' && p === '/calendar/v3/calendars/primary/events') {
+  if (url.host === 'www.googleapis.com' && p === '/calendar/v3/users/me/calendarList') {
+    const all = [
+      { id: 'yo@example.com', summary: 'yo@example.com', primary: true, accessRole: 'owner', backgroundColor: '#9fe1e7' },
+      { id: 'clases@group.calendar.google.com', summary: 'Clases', accessRole: 'owner', backgroundColor: '#f691b2' },
+      { id: 'es.pe#holiday@group.v.calendar.google.com', summary: 'Feriados', accessRole: 'reader' },
+    ];
+    const min = url.searchParams.get('minAccessRole');
+    return json({ kind: 'calendar#calendarList', items: min === 'owner' ? all.filter((c) => c.accessRole === 'owner') : all });
+  }
+
+  const evm = p.match(/^\/calendar\/v3\/calendars\/([^/]+)\/events$/);
+  if (url.host === 'www.googleapis.com' && evm) {
+    const calId = decodeURIComponent(evm[1]!);
     const min = new Date(url.searchParams.get('timeMin')!).getTime();
     const max = new Date(url.searchParams.get('timeMax')!).getTime();
-    const items = events(now).filter((e) => {
+    const source = calId === 'primary' || calId === 'yo@example.com' ? events(now)
+      : calId === 'clases@group.calendar.google.com' ? classEvents(now)
+      : calId.includes('holiday') ? [{ id: 'fer', status: 'confirmed', summary: 'Feriado nacional', start: { date: dayKeyInZone(now, TZ) }, end: { date: addDays(dayKeyInZone(now, TZ), 1) } }]
+      : null;
+    if (!source) return json({ error: { code: 404 } }, 404);
+    const items = (source as MockEvent[]).filter((e) => {
       const s = new Date(e.start.dateTime ?? `${e.start.date}T00:00:00-05:00`).getTime();
       const en = new Date(e.end.dateTime ?? `${e.end.date}T00:00:00-05:00`).getTime();
       return en > min && s < max;

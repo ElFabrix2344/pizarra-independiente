@@ -96,6 +96,32 @@ describe('/api/calendar', () => {
     expect(allDay.dayKey).toBe(addDays(dayKeyInZone(now, TZ), 2));
     expect(r.events.find((e) => e.id === 'ev-now')!.desc).toBe('Ejercicios antes de la clase.\nLlevar laptop.');
   });
+  it('lee todos los calendarios propios (clases incluidas), no los suscritos, y sin duplicados', async () => {
+    const r = await getPanelCalendar('mock', { now: new Date(), timeZone: TZ, fetch: mockFetch });
+    expect(r.calendars.map((c) => c.name)).toEqual(['yo@example.com', 'Clases']);
+    const ids = r.events.map((e) => e.id);
+    expect(ids).toContain('cl-hee');
+    expect(ids).toContain('cl-eval');
+    expect(ids).not.toContain('fer'); // feriados: calendario suscrito (reader)
+    expect(ids).not.toContain('cl-dup'); // mismo iCalUID y hora que ev-t1
+    expect(ids).toContain('ev-t1');
+    const hee = r.events.find((e) => e.id === 'cl-hee')!;
+    expect(hee.calendar).toBe('Clases');
+    expect(hee.color).toBe('#f691b2');
+    // ordenados por día y hora
+    const keys = r.events.map((e) => e.dayKey + e.start);
+    expect(keys).toEqual([...keys].sort());
+  });
+  it('CALENDAR_IDS fija la lista a mano', async () => {
+    const r = await getPanelCalendar('mock', { now: new Date(), timeZone: TZ, fetch: mockFetch, calendarIds: 'primary' });
+    expect(r.calendars).toEqual([{ id: 'primary', name: 'Principal', ok: true }]);
+    expect(r.events.some((e) => e.id === 'cl-hee')).toBe(false);
+  });
+  it('si un calendario secundario falla, muestra el resto', async () => {
+    const r = await getPanelCalendar('mock', { now: new Date(), timeZone: TZ, fetch: mockFetch, calendarIds: 'primary,no-existe@group.calendar.google.com' });
+    expect(r.calendars.map((c) => c.ok)).toEqual([true, false]);
+    expect(r.events.length).toBeGreaterThan(0);
+  });
   it('evento de día completo: inicio inclusivo, fin exclusivo, en hora de Lima', () => {
     const e = normalizeEvent({ id: 'x', start: { date: '2026-10-08' }, end: { date: '2026-10-09' } }, TZ)!;
     expect(e.start).toBe('2026-10-08T05:00:00.000Z');

@@ -22,7 +22,7 @@ Todas las rutas exigen sesión de Cloudflare Access.
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| GET | `/api/calendar` | Eventos del calendario principal, de hoy a +7 días |
+| GET | `/api/calendar` | Eventos de tus calendarios (principal, clases, etc.), de hoy a +7 días |
 | GET | `/api/tasks` | Tareas de TickTick sin completar: vencidas (últimos 7 días), de hoy y de la semana |
 | GET | `/api/evaluations?limit=6` | Tareas de hoy a +70 días cuyo título es una evaluación (PC, Parcial, Examen, Entrega…) |
 | POST | `/api/tasks/:projectId/:taskId/complete` | Marca la tarea como completada (requiere cabecera `X-Pizarra: 1` y mismo origen) |
@@ -233,4 +233,4 @@ npm run typecheck
   - Hay filtro por fechas: `POST /open/v1/task/undone` (rango de hasta 14 días, todos los proyectos incluido el inbox). El panel parte los rangos largos en tramos de 14 días. La doc no dice si el rango se aplica a `dueDate` o a `startDate`; por eso el backend vuelve a filtrar por fecha de vencimiento y existe `/api/debug/ticktick` para comprobarlo.
   - El objeto Task documentado no trae columna, pero en la práctica las respuestas sí incluyen `columnId` en listas con columnas (incluido el inbox). La etiqueta muestra «Lista · Columna»; en el inbox, solo la columna.
   - Verificado con datos reales: `/task/undone` y el recorrido completo de proyectos devuelven las mismas tareas, por eso la estrategia por defecto es `undone`.
-- **Google Calendar** ([events.list](https://developers.google.com/workspace/calendar/api/v3/reference/events/list)): `calendars/primary/events` con `singleEvents=true`, `orderBy=startTime`, `timeMin`/`timeMax` en RFC3339 y `timeZone=America/Lima`. Scope `calendar.readonly`.
+- **Google Calendar** ([events.list](https://developers.google.com/workspace/calendar/api/v3/reference/events/list), [calendarList.list](https://developers.google.com/workspace/calendar/api/v3/reference/calendarList/list)): lee **todos los calendarios propios no ocultos** (`calendarList` con `minAccessRole=owner`): el principal y los que creaste, como el de clases. Los suscritos (feriados, calendarios de otros) quedan fuera. Para fijar la lista a mano, define `CALENDAR_IDS` (ids separados por comas, `primary` vale). Si un calendario secundario falla, se muestran los demás. Eventos con `singleEvents=true`, `orderBy=startTime`, `timeMin`/`timeMax` en RFC3339 y `timeZone=America/Lima`; los repetidos en dos calendarios (mismo `iCalUID` y hora) salen una vez. Scope `calendar.readonly`.

@@ -92,9 +92,58 @@ export function refreshGoogleToken(
 
 // ---------- Calendar ----------
 
+/** Subconjunto del recurso CalendarList que usa el panel. */
+export interface GoogleCalendarEntry {
+  id: string;
+  summary?: string;
+  summaryOverride?: string;
+  primary?: boolean;
+  hidden?: boolean;
+  accessRole?: 'freeBusyReader' | 'reader' | 'writerWithoutPrivateAccess' | 'writer' | 'owner';
+  backgroundColor?: string;
+}
+
+/**
+ * GET /users/me/calendarList — calendarios de la lista del usuario.
+ * Con minAccessRole="owner" solo vienen los propios (no los suscritos, como feriados).
+ * Los ocultos se excluyen por defecto (showHidden=false).
+ */
+export async function listCalendars(
+  p: { accessToken: string; minAccessRole?: GoogleCalendarEntry['accessRole'] },
+  fetchImpl: typeof fetch = fetch,
+): Promise<GoogleCalendarEntry[]> {
+  const out: GoogleCalendarEntry[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 5; page++) {
+    const u = new URL(`${CALENDAR_API}/users/me/calendarList`);
+    if (p.minAccessRole) u.searchParams.set('minAccessRole', p.minAccessRole);
+    u.searchParams.set('maxResults', '250');
+    if (pageToken) u.searchParams.set('pageToken', pageToken);
+    let res: Response;
+    try {
+      res = await fetchImpl(u.toString(), { headers: { Authorization: `Bearer ${p.accessToken}`, Accept: 'application/json' } });
+    } catch (e) {
+      throw new GoogleError(`Sin respuesta de Google Calendar: ${(e as Error).message}`, 0);
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new GoogleError(`Calendar calendarList.list → ${res.status} ${body.slice(0, 200)}`, res.status);
+    }
+    const data = (await res.json()) as { items?: GoogleCalendarEntry[]; nextPageToken?: string };
+    if (!data || (data.items !== undefined && !Array.isArray(data.items))) {
+      throw new GoogleError('Calendar devolvió una lista de calendarios con formato inesperado', 502);
+    }
+    out.push(...(data.items ?? []));
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+  return out;
+}
+
 /** Subconjunto del recurso Event que usa el panel. */
 export interface GoogleEvent {
   id: string;
+  iCalUID?: string;
   status?: 'confirmed' | 'tentative' | 'cancelled';
   summary?: string;
   description?: string;

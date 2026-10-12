@@ -98,7 +98,7 @@ async function calendarWithRetry(env: Env, url: URL, tz: string) {
   for (let attempt = 0; ; attempt++) {
     const { token, fetch: f } = await getGoogleAccessToken(env, url);
     try {
-      return await getPanelCalendar(token, { now: new Date(), timeZone: tz, fetch: f });
+      return await getPanelCalendar(token, { now: new Date(), timeZone: tz, fetch: f, calendarIds: env.CALENDAR_IDS });
     } catch (e) {
       if (e instanceof GoogleError) {
         if (e.status === 401 && attempt === 0) {

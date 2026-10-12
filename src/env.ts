@@ -6,6 +6,8 @@ export interface Env {
   TIMEZONE: string;
   /** "undone" (por defecto) o "scan": cómo se leen las tareas de TickTick. */
   TICKTICK_STRATEGY?: string;
+  /** Opcional: ids de calendarios separados por comas. Vacío = todos los calendarios propios no ocultos. */
+  CALENDAR_IDS?: string;
 
   // secretos (`wrangler secret put` / `.env` en local)
   /** https://<equipo>.cloudflareaccess.com */
