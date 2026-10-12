@@ -28,6 +28,16 @@ export interface ActiveTimer {
   course: string;
   /** epoch ms */
   startedAt: number;
+  /** epoch ms desde que está en pausa; null si está corriendo. */
+  pausedAt?: number | null;
+  /** ms acumulados en pausas ya terminadas. */
+  pausedMs?: number;
+}
+
+/** Milisegundos de estudio activo (sin pausas) hasta `now`. */
+export function activeMs(a: ActiveTimer, now: number): number {
+  const until = a.pausedAt ?? now;
+  return Math.max(0, until - a.startedAt - (a.pausedMs ?? 0));
 }
 
 export interface StudySettings {
@@ -446,24 +456,45 @@ export async function startStudy(client: TickTickClient, store: StudyStore, cour
   const name = await validCourse(client, store, course);
   const current = await store.getActive();
   if (current) throw new ApiError('bad_request', 409, `Ya hay un cronómetro en marcha (${current.course}).`);
-  const active = { course: name, startedAt: now };
+  const active: ActiveTimer = { course: name, startedAt: now, pausedAt: null, pausedMs: 0 };
   await store.setActive(active);
   return { active };
+}
+
+export async function pauseStudy(store: StudyStore, now = Date.now()) {
+  const active = await store.getActive();
+  if (!active) throw new ApiError('bad_request', 409, 'No hay un cronómetro en marcha.');
+  if (active.pausedAt) throw new ApiError('bad_request', 409, 'El cronómetro ya está en pausa.');
+  const next: ActiveTimer = { ...active, pausedAt: now, pausedMs: active.pausedMs ?? 0 };
+  await store.setActive(next);
+  return { active: next };
+}
+
+export async function resumeStudy(store: StudyStore, now = Date.now()) {
+  const active = await store.getActive();
+  if (!active) throw new ApiError('bad_request', 409, 'No hay un cronómetro en marcha.');
+  if (!active.pausedAt) throw new ApiError('bad_request', 409, 'El cronómetro no está en pausa.');
+  const next: ActiveTimer = { ...active, pausedAt: null, pausedMs: (active.pausedMs ?? 0) + Math.max(0, now - active.pausedAt) };
+  await store.setActive(next);
+  return { active: next };
 }
 
 export async function stopStudy(client: TickTickClient, store: StudyStore, now = Date.now()) {
   const active = await store.getActive();
   if (!active) throw new ApiError('bad_request', 409, 'No hay un cronómetro en marcha.');
-  const seconds = Math.round((now - active.startedAt) / 1000);
+  const seconds = Math.round(activeMs(active, now) / 1000);
   if (seconds < MIN_SECONDS) {
     await store.clearActive();
-    return { saved: false as const, reason: 'Menos de 1 minuto: no se guardó.' };
+    return { saved: false as const, reason: 'Menos de 1 minuto de estudio: no se guardó.' };
   }
   const capped = Math.min(seconds, MAX_SECONDS);
+  // Se guarda solo el tiempo activo, terminando cuando se paró (o cuando empezó la pausa final).
+  // No se usa pauseDuration: la unidad que devuelve TickTick no es fiable (ver focusSeconds).
+  const end = active.pausedAt ?? now;
   const focus = await client.createFocus({
     type: 1,
-    startTime: new Date(active.startedAt),
-    endTime: new Date(active.startedAt + capped * 1000),
+    startTime: new Date(end - capped * 1000),
+    endTime: new Date(end),
     duration: capped,
     note: fmtNote(active.course),
   });

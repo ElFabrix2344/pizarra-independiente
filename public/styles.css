@@ -239,6 +239,13 @@ section.study{display:flex;flex-direction:column;gap:12px;min-width:0}
 .timer.running button{background:var(--hero-ink);color:var(--hero-bg);border-color:transparent}
 .timer.running button.ghost{background:transparent;color:var(--hero-ink);border-color:var(--hero-rule)}
 .timer.running button.armed{background:var(--crit);color:#fff}
+.timer.running.paused{background:var(--surface);color:var(--ink);border-color:var(--line)}
+.timer.running.paused .muted{color:var(--muted)}
+.timer.running.paused .pill{background:var(--bg);color:var(--ink)}
+.timer.running.paused .t-clock{color:var(--muted)}
+.timer.running.paused button{background:var(--ink);color:var(--bg)}
+.timer.running.paused button.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.pause-ico{font-size:.7em;letter-spacing:-1px}
 .course-btns{display:flex;flex-wrap:wrap;gap:8px}
 .course-btns button{background:var(--bg);border:1px solid var(--line);font-size:.95rem}
 .course-btns button:hover{border-color:var(--ink)}

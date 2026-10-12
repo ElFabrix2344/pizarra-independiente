@@ -207,3 +207,45 @@ describe('historial del ciclo', () => {
     await expect(saveCycleStart(store, '2001-01-01', opts)).rejects.toMatchObject({ status: 400 });
   });
 });
+
+describe('pausa del cronómetro', () => {
+  it('solo cuenta el tiempo activo y la sesión termina al parar', async () => {
+    const { pauseStudy, resumeStudy, activeMs } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    const M = 60000, t0 = Date.now() - 60 * M;
+    await startStudy(client(), store, 'HEE', t0);
+    await pauseStudy(store, t0 + 20 * M);
+    expect(activeMs((await store.getActive())!, t0 + 30 * M)).toBe(20 * M); // en pausa no avanza
+    await resumeStudy(store, t0 + 35 * M);
+    await pauseStudy(store, t0 + 40 * M);
+    await resumeStudy(store, t0 + 42 * M);
+    const res = await stopStudy(client(), store, t0 + 52 * M); // 20 + 5 + 10 = 35 min activos
+    expect(res).toMatchObject({ saved: true, minutes: 35, course: 'HEE' });
+    const r = await getStudy(client(), store, { now: new Date(), timeZone: TZ });
+    const s = r.sessions.find((x) => x.id === (res as { id: string }).id)!;
+    expect(s.minutes).toBe(35);
+    expect(new Date(s.end!).getTime()).toBe(Math.floor((t0 + 52 * M) / 1000) * 1000); // TickTick guarda segundos
+  });
+  it('parar en pausa guarda hasta el inicio de la pausa', async () => {
+    const { pauseStudy } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    const M = 60000, t0 = Date.now() - 90 * M;
+    await startStudy(client(), store, 'EPP', t0);
+    await pauseStudy(store, t0 + 25 * M);
+    const res = await stopStudy(client(), store, t0 + 80 * M);
+    expect(res).toMatchObject({ saved: true, minutes: 25 });
+  });
+  it('estados inválidos dan 409', async () => {
+    const { pauseStudy, resumeStudy } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    await expect(pauseStudy(store)).rejects.toMatchObject({ status: 409 });
+    await startStudy(client(), store, 'HEE');
+    await expect(resumeStudy(store)).rejects.toMatchObject({ status: 409 });
+    await pauseStudy(store);
+    await expect(pauseStudy(store)).rejects.toMatchObject({ status: 409 });
+  });
+  it('cronómetros guardados antes de existir la pausa siguen funcionando', async () => {
+    const { activeMs } = await import('../src/services/study');
+    expect(activeMs({ course: 'HEE', startedAt: 1000 }, 61000)).toBe(60000);
+  });
+});

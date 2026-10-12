@@ -369,6 +369,10 @@ function fmtMin(m) {
   const h = Math.floor(m / 60), r = m % 60;
   return h + ' h' + (r ? ' ' + String(r).padStart(2, '0') : '');
 }
+/** Tiempo de estudio activo del cronómetro (sin pausas). */
+function activeElapsed(a) {
+  return Math.max(0, (a.pausedAt || Date.now()) - a.startedAt - (a.pausedMs || 0));
+}
 function clock(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map(n => String(n).padStart(2, '0')).join(':');
@@ -414,11 +418,15 @@ function renderStudy() {
   const msg = studyMsg ? `<span class="msg ${studyMsg.ok ? 'good' : 'bad'}">${esc(studyMsg.t)}</span>` : '';
   if (d.active) {
     const isArmed = studyArmed === 'cancel';
-    t = `<div class="timer running">
-      <div class="t-head"><span class="pill"><span class="dot" aria-hidden="true"></span>Estudiando</span><span class="t-course">${esc(d.active.course)}</span></div>
-      <span class="t-clock mono" id="study-clock">${clock(Date.now() - d.active.startedAt)}</span>
-      <span class="muted">Desde las ${fTime.format(new Date(d.active.startedAt))}${dayKey(new Date(d.active.startedAt)) !== today() ? ' de ' + esc(fDay.format(new Date(d.active.startedAt))) : ''}</span>
-      <div class="t-actions"><button type="button" data-study-stop${studyBusy ? ' disabled' : ''}>■ Parar y guardar</button><button type="button" class="ghost${isArmed ? ' armed' : ''}" data-study-cancel${studyBusy ? ' disabled' : ''}>${isArmed ? '¿Descartar? Toca otra vez' : 'Descartar'}</button></div>
+    const paused = !!d.active.pausedAt;
+    const pausedMin = Math.round(((d.active.pausedMs || 0) + (paused ? Date.now() - d.active.pausedAt : 0)) / 60000);
+    t = `<div class="timer running${paused ? ' paused' : ''}">
+      <div class="t-head"><span class="pill">${paused ? '<span class="pause-ico" aria-hidden="true">❚❚</span>En pausa' : '<span class="dot" aria-hidden="true"></span>Estudiando'}</span><span class="t-course">${esc(d.active.course)}</span></div>
+      <span class="t-clock mono" id="study-clock">${clock(activeElapsed(d.active))}</span>
+      <span class="muted">Desde las ${fTime.format(new Date(d.active.startedAt))}${dayKey(new Date(d.active.startedAt)) !== today() ? ' de ' + esc(fDay.format(new Date(d.active.startedAt))) : ''}${pausedMin ? ` · ${fmtMin(pausedMin)} en pausa` : ''}</span>
+      <div class="t-actions">${paused
+        ? `<button type="button" data-study-resume${studyBusy ? ' disabled' : ''}>▶ Reanudar</button>`
+        : `<button type="button" data-study-pause${studyBusy ? ' disabled' : ''}>❚❚ Pausar</button>`}<button type="button" class="${paused ? '' : 'ghost'}" data-study-stop${studyBusy ? ' disabled' : ''}>■ Parar y guardar</button><button type="button" class="ghost${isArmed ? ' armed' : ''}" data-study-cancel${studyBusy ? ' disabled' : ''}>${isArmed ? '¿Descartar? Toca otra vez' : 'Descartar'}</button></div>
       ${msg}</div>`;
   } else {
     t = `<div class="timer"><span class="eyebrow">Empezar a estudiar</span>
@@ -490,6 +498,8 @@ function armStudy(key) {
 function studyClick(ev) {
   const st = ev.target.closest('[data-study-start]');
   if (st) { studyAction('/api/study/start', 'POST', { course: st.dataset.studyStart }); return true; }
+  if (ev.target.closest('[data-study-pause]')) { studyAction('/api/study/pause', 'POST', {}); return true; }
+  if (ev.target.closest('[data-study-resume]')) { studyAction('/api/study/resume', 'POST', {}); return true; }
   if (ev.target.closest('[data-study-stop]')) { studyAction('/api/study/stop', 'POST', {}); return true; }
   if (ev.target.closest('[data-study-cancel]')) {
     if (studyArmed !== 'cancel') { armStudy('cancel'); return true; }
@@ -540,7 +550,7 @@ document.addEventListener('input', ev => { if (ev.target.closest('#study-more'))
 // Reloj del cronómetro: cada segundo, solo el texto.
 setInterval(() => {
   const el = document.getElementById('study-clock'), a = S.st.items && S.st.items.active;
-  if (el && a) el.textContent = clock(Date.now() - a.startedAt);
+  if (el && a && !a.pausedAt) el.textContent = clock(activeElapsed(a));
 }, 1000);
 
 /* ---------- historial del ciclo ---------- */

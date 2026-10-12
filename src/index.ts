@@ -6,7 +6,19 @@ import { handleOAuth } from './oauth';
 import { connectionStatus, getGoogleAccessToken, getTickTickClient } from './providers';
 import { getPanelCalendar } from './services/calendar';
 import { getEvaluations, getPanelTasks, ttCall, type Strategy } from './services/tasks';
-import { addManual, getHistory, getStudy, saveCourses, saveCycleStart, saveGoals, startStudy, stopStudy, StudyStore } from './services/study';
+import {
+  addManual,
+  getHistory,
+  getStudy,
+  pauseStudy,
+  resumeStudy,
+  saveCourses,
+  saveCycleStart,
+  saveGoals,
+  startStudy,
+  stopStudy,
+  StudyStore,
+} from './services/study';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -116,6 +128,8 @@ async function studyAction(req: Request, env: Env, url: URL, tz: string): Promis
   const body = req.method === 'DELETE' ? {} : await readJson(req);
 
   if (p === '/api/study/start' && req.method === 'POST') return json(await ttCall(() => startStudy(client, store, body.course)));
+  if (p === '/api/study/pause' && req.method === 'POST') return json(await pauseStudy(store));
+  if (p === '/api/study/resume' && req.method === 'POST') return json(await resumeStudy(store));
   if (p === '/api/study/stop' && req.method === 'POST') return json(await ttCall(() => stopStudy(client, store)));
   if (p === '/api/study/cancel' && req.method === 'POST') {
     await store.clearActive();
