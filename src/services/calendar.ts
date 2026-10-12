@@ -65,6 +65,26 @@ export function htmlToText(s: string): string {
     .trim();
 }
 
+/**
+ * Colores de evento de Google Calendar (colorId 1–11) con los tonos de su interfaz actual.
+ * La API (GET /colors) devuelve la paleta clásica en pastel; estos son los que ves en Calendar.
+ */
+export const EVENT_COLORS: Record<string, string> = {
+  '1': '#7986CB', // Lavanda
+  '2': '#33B679', // Salvia
+  '3': '#8E24AA', // Uva
+  '4': '#E67C73', // Flamenco
+  '5': '#F6BF26', // Plátano
+  '6': '#F4511E', // Mandarina
+  '7': '#039BE5', // Pavo real
+  '8': '#616161', // Grafito
+  '9': '#3F51B5', // Arándano
+  '10': '#0B8043', // Albahaca
+  '11': '#D50000', // Tomate
+};
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
 export function normalizeEvent(e: GoogleEvent, timeZone: string, source?: CalendarSource): PanelEvent | null {
   if (!e || e.status === 'cancelled' || !e.start) return null;
   const allDay = !e.start.dateTime && !!e.start.date;
@@ -92,7 +112,7 @@ export function normalizeEvent(e: GoogleEvent, timeZone: string, source?: Calend
     dayKey,
     link: e.htmlLink ?? null,
     calendar: source?.name ?? '',
-    color: source?.color ?? null,
+    color: (e.colorId && EVENT_COLORS[e.colorId]) || (source?.color && HEX.test(source.color) ? source.color : null),
   };
 }
 

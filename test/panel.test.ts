@@ -107,7 +107,9 @@ describe('/api/calendar', () => {
     expect(ids).toContain('ev-t1');
     const hee = r.events.find((e) => e.id === 'cl-hee')!;
     expect(hee.calendar).toBe('Clases');
-    expect(hee.color).toBe('#f691b2');
+    expect(hee.color).toBe('#039BE5'); // colorId 7 = Pavo real
+    // Evento sin color propio → color de su calendario.
+    expect(r.events.find((e) => e.id === 'ev-t1')!.color).toBe('#9fe1e7');
     // ordenados por día y hora
     const keys = r.events.map((e) => e.dayKey + e.start);
     expect(keys).toEqual([...keys].sort());
@@ -121,6 +123,14 @@ describe('/api/calendar', () => {
     const r = await getPanelCalendar('mock', { now: new Date(), timeZone: TZ, fetch: mockFetch, calendarIds: 'primary,no-existe@group.calendar.google.com' });
     expect(r.calendars.map((c) => c.ok)).toEqual([true, false]);
     expect(r.events.length).toBeGreaterThan(0);
+  });
+  it('color: el del evento (colorId) o, si no tiene, el del calendario', () => {
+    const src = { id: 'c', name: 'C', color: '#123456' };
+    const base = { id: 'x', start: { dateTime: '2026-10-12T09:30:00-05:00' }, end: { dateTime: '2026-10-12T11:00:00-05:00' } };
+    expect(normalizeEvent({ ...base, colorId: '11' }, TZ, src)!.color).toBe('#D50000');
+    expect(normalizeEvent(base, TZ, src)!.color).toBe('#123456');
+    expect(normalizeEvent(base, TZ, { ...src, color: 'red' })!.color).toBeNull();
+    expect(normalizeEvent({ ...base, colorId: '99' }, TZ)!.color).toBeNull();
   });
   it('evento de día completo: inicio inclusivo, fin exclusivo, en hora de Lima', () => {
     const e = normalizeEvent({ id: 'x', start: { date: '2026-10-08' }, end: { date: '2026-10-09' } }, TZ)!;

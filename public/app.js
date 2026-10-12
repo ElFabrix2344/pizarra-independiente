@@ -181,9 +181,9 @@ function evRow(e, mainId, now) {
   const isNow = e.start <= now && e.end > now, past = e.end <= now;
   const open = evOpen.has(e.id) ? evOpen.get(e.id) : (e.id === mainId && !!e.desc);
   const more = open && (e.desc || e.link)
-    ? `<div class="more">${e.desc ? `<p class="d">${esc(e.desc)}</p>` : ''}${e.link ? `<a href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Abrir en Google Calendar ↗</a>` : ''}</div>`
+    ? `<div class="more">${e.desc ? `<p class="d">${esc(e.desc)}</p>` : ''}${e.calendar ? `<span class="cal-name"><i class="sw" aria-hidden="true"></i>${esc(e.calendar)}</span>` : ''}${e.link ? `<a href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Abrir en Google Calendar ↗</a>` : ''}</div>`
     : '';
-  return `<li class="ev${isNow ? ' now' : ''}${past && !isNow ? ' past' : ''}${open ? ' open' : ''}">
+  return `<li class="ev${isNow ? ' now' : ''}${past && !isNow ? ' past' : ''}${open ? ' open' : ''}"${colorAttr(e)}>
     <button type="button" class="row-main" data-ev="${esc(e.id)}" aria-expanded="${open}">
       <span class="when"><b>${fTime.format(e.start)}</b><span>${fTime.format(e.end)}</span></span>
       <span class="t">${esc(e.title)}${isNow ? '<span class="live">Ahora</span>' : ''}</span>
@@ -206,8 +206,8 @@ function renderCal() {
     h += `<div class="day">${dayHeader(k)}`;
     if (allDay.length) {
       h += '<div class="allday">' + allDay.map(e => e.link
-        ? `<a class="chip" href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Todo el día · ${esc(e.title)}</a>`
-        : `<span class="chip">Todo el día · ${esc(e.title)}</span>`).join('') + '</div>';
+        ? `<a class="chip"${colorAttr(e)} href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Todo el día · ${esc(e.title)}</a>`
+        : `<span class="chip"${colorAttr(e)}>Todo el día · ${esc(e.title)}</span>`).join('') + '</div>';
     }
     if (past.length || rest.length) {
       h += '<ul class="rows">';
@@ -278,12 +278,12 @@ function renderHero() {
   if (cur) {
     const pct = Math.min(100, Math.max(0, Math.round((now - cur.start) / (cur.end - cur.start) * 100)));
     h += `<div class="hero-top"><span class="pill"><span class="dot" aria-hidden="true"></span>Ahora</span><span class="hero-when mono">${fTime.format(cur.start)}–${fTime.format(cur.end)}</span></div>
-      <h2 class="hero-title">${esc(cur.title)}</h2>${cur.desc ? `<p class="hero-desc">${esc(cur.desc)}</p>` : ''}
-      <progress max="100" value="${pct}" aria-label="Avance del evento: ${pct} %"></progress>
+      <h2 class="hero-title"${colorAttr(cur)}>${esc(cur.title)}</h2>${cur.desc ? `<p class="hero-desc">${esc(cur.desc)}</p>` : ''}
+      <progress${colorAttr(cur)} max="100" value="${pct}" aria-label="Avance del evento: ${pct} %"></progress>
       <div class="hero-count"><span class="big">${rel(cur.end - now)}</span><span class="muted">para terminar</span></div>`;
   } else if (nxt) {
     h += `<div class="hero-top"><span class="pill">Siguiente</span><span class="hero-when">${esc(whenLabel(nxt.start))}</span></div>
-      <h2 class="hero-title">${esc(nxt.title)}</h2>${nxt.desc ? `<p class="hero-desc">${esc(nxt.desc)}</p>` : ''}
+      <h2 class="hero-title"${colorAttr(nxt)}>${esc(nxt.title)}</h2>${nxt.desc ? `<p class="hero-desc">${esc(nxt.desc)}</p>` : ''}
       <div class="hero-count"><span class="big">en ${rel(nxt.start - now)}</span></div>`;
   } else {
     h += '<div class="hero-top"><span class="pill">Agenda</span></div><p class="msg-empty">Nada más agendado esta semana.</p>';
@@ -293,7 +293,7 @@ function renderHero() {
     const later = s.items.filter(e => !e.allDay && e !== main && e.start > now && dayKey(e.start) === t).slice(0, 4);
     if (later.length) {
       h += `<div class="later"><span class="eyebrow">${cur ? 'Después, hoy' : 'Más tarde, hoy'}</span><ul>`
-        + later.map(e => `<li><span class="mono">${fTime.format(e.start)}</span><span>${esc(e.title)}</span></li>`).join('') + '</ul></div>';
+        + later.map(e => `<li${colorAttr(e)}><span class="mono">${fTime.format(e.start)}</span><span><i class="sw" aria-hidden="true"></i>${esc(e.title)}</span></li>`).join('') + '</ul></div>';
     } else if (dayKey(main.start) === t) {
       h += `<div class="later"><p>Es lo último de hoy.${cur && nxt ? ` Luego: ${esc(whenLabel(nxt.start))} · ${esc(nxt.title)}` : ''}</p></div>`;
     } else {
@@ -539,8 +539,20 @@ setInterval(() => {
   if (el && a) el.textContent = clock(Date.now() - a.startedAt);
 }, 1000);
 
+/* ---------- colores de calendario ---------- */
+// La CSP no permite style="" en el HTML: el color va en data-color y se aplica por CSSOM.
+const HEX = /^#[0-9a-f]{6}$/i;
+function colorAttr(e) { return e && e.color && HEX.test(e.color) ? ` data-color="${e.color}"` : ''; }
+function applyColors() {
+  document.querySelectorAll('[data-color]').forEach(el => {
+    const c = el.getAttribute('data-color');
+    if (HEX.test(c)) { el.style.setProperty('--ev', c); el.classList.add('has-color'); }
+  });
+}
+
 function render() {
   renderDate(); renderBanner(); renderHero(); renderCounts(); renderExams(); renderStudy(); renderCal(); renderTT();
+  applyColors();
   setFresh($('fresh-cal'), freshText(S.cal));
   setFresh($('fresh-tt'), freshText(S.tt, S.ev));
   const gs = $('global-status');

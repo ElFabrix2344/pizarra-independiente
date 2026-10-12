@@ -99,6 +99,7 @@ function tasks(now: Date): TickTickTask[] {
 interface MockEvent {
   id: string;
   iCalUID?: string;
+  colorId?: string;
   status: string;
   summary: string;
   description?: string;
@@ -138,9 +139,9 @@ function classEvents(now: Date): MockEvent[] {
     id, status: 'confirmed', summary, start: dt(s), end: dt(e), htmlLink: `https://www.google.com/calendar/event?eid=${id}`, ...extra,
   });
   return [
-    cls('cl-hee', '📜 HEE — Clase', at(t, 9, 30), at(t, 11, 20), { description: 'Historia Económica · Aula A-408' }),
-    cls('cl-est', '📊 Estadística — Clase', at(t, 18, 30), at(t, 21, 20)),
-    cls('cl-eval', '📈 EvalPriv — Clase', at(addDays(t, 1), 9, 30), at(addDays(t, 1), 12, 20)),
+    cls('cl-hee', '📜 HEE — Clase', at(t, 9, 30), at(t, 11, 20), { description: 'Historia Económica · Aula A-408', colorId: '7' }),
+    cls('cl-est', '📊 Estadística — Clase', at(t, 18, 30), at(t, 21, 20), { colorId: '2' }),
+    cls('cl-eval', '📈 EvalPriv — Clase', at(addDays(t, 1), 9, 30), at(addDays(t, 1), 12, 20), { colorId: '3' }),
     // Mismo evento que "Clase — Curso B" del calendario principal: debe salir una sola vez.
     { ...cls('cl-dup', 'Clase — Curso B', at(addDays(t, 1), 11), at(addDays(t, 1), 12, 30)), iCalUID: 'ev-t1' },
   ];

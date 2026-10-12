@@ -144,6 +144,8 @@ export async function listCalendars(
 export interface GoogleEvent {
   id: string;
   iCalUID?: string;
+  /** Color propio del evento ("1"…"11"); si falta, el evento usa el color de su calendario. */
+  colorId?: string;
   status?: 'confirmed' | 'tentative' | 'cancelled';
   summary?: string;
   description?: string;
