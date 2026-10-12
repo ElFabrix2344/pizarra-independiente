@@ -256,6 +256,8 @@ function withSecurityHeaders(res: Response): Response {
   h.set('X-Frame-Options', 'DENY');
   h.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   h.set('Strict-Transport-Security', 'max-age=31536000');
+  // Hora del servidor (ms): el cronómetro de estudio la usa para no depender del reloj del dispositivo.
+  h.set('X-Server-Time', String(Date.now()));
   // Todo es privado: nada en cachés compartidas; el HTML/JS se revalida siempre.
   if (!h.has('Cache-Control') || !h.get('Cache-Control')!.includes('no-store')) h.set('Cache-Control', 'private, no-cache');
   return r;

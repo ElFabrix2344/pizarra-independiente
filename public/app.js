@@ -28,13 +28,22 @@ function whenLabel(d) {
 /* ---------- API ---------- */
 // Los errores tienen la forma { code, message, provider }. Códigos propios del cliente:
 // "network" (sin conexión) y "session" (la sesión de Cloudflare Access expiró).
+// Desfase entre el reloj de este dispositivo y el del servidor (ms). El cronómetro guarda
+// las horas del servidor; si el reloj local va atrasado, sin esto el tiempo "salta" al pausar.
+let clockOffset = 0;
+const serverNow = () => Date.now() + clockOffset;
+
 async function api(path, opts = {}) {
   let res;
+  const t0 = Date.now();
   try {
     res = await fetch(path, { credentials: 'same-origin', redirect: 'manual', cache: 'no-store', ...opts });
   } catch (_) {
     throw { code: 'network' };
   }
+  const st = Number(res.headers.get('X-Server-Time'));
+  // La hora se marca al final del procesamiento: se compara con la mitad del viaje de vuelta (~estimación).
+  if (st > 0) { const t1 = Date.now(); clockOffset = st - (t1 - Math.min(250, (t1 - t0) / 4)); }
   // Access redirige a su página de login cuando la sesión expira.
   if (res.type === 'opaqueredirect' || res.status === 0) throw { code: 'session' };
   let body = null;
@@ -371,7 +380,7 @@ function fmtMin(m) {
 }
 /** Tiempo de estudio activo del cronómetro (sin pausas). */
 function activeElapsed(a) {
-  return Math.max(0, (a.pausedAt || Date.now()) - a.startedAt - (a.pausedMs || 0));
+  return Math.max(0, (a.pausedAt || serverNow()) - a.startedAt - (a.pausedMs || 0));
 }
 function clock(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -419,7 +428,7 @@ function renderStudy() {
   if (d.active) {
     const isArmed = studyArmed === 'cancel';
     const paused = !!d.active.pausedAt;
-    const pausedMin = Math.round(((d.active.pausedMs || 0) + (paused ? Date.now() - d.active.pausedAt : 0)) / 60000);
+    const pausedMin = Math.round(((d.active.pausedMs || 0) + (paused ? serverNow() - d.active.pausedAt : 0)) / 60000);
     t = `<div class="timer running${paused ? ' paused' : ''}">
       <div class="t-head"><span class="pill">${paused ? '<span class="pause-ico" aria-hidden="true">❚❚</span>En pausa' : '<span class="dot" aria-hidden="true"></span>Estudiando'}</span><span class="t-course">${esc(d.active.course)}</span></div>
       <span class="t-clock mono" id="study-clock">${clock(activeElapsed(d.active))}</span>
