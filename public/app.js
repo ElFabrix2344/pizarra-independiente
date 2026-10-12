@@ -387,6 +387,7 @@ async function studyAction(path, method, body) {
     else if (path.endsWith('/manual')) { studyMsg = { ok: true, t: `Sesión agregada: ${fmtMin(r.minutes)} de ${r.course}.` }; moreDirty = false; }
     else if (path.endsWith('/goals')) { studyMsg = { ok: true, t: 'Metas guardadas.' }; moreDirty = false; }
     else if (path.endsWith('/courses')) { studyMsg = { ok: true, t: 'Cursos actualizados.' }; moreDirty = false; }
+    else if (path.endsWith('/cycle')) studyMsg = { ok: true, t: 'Inicio del ciclo guardado.' };
     else if (method === 'DELETE') studyMsg = { ok: true, t: 'Sesión borrada.' };
     return r;
   } catch (e) {
@@ -396,6 +397,7 @@ async function studyAction(path, method, body) {
     studyBusy = false;
     await load('st');
     render();
+    if (document.getElementById('history-wrap').open) loadHistory();
   }
 }
 
@@ -517,6 +519,8 @@ document.addEventListener('submit', ev => {
     if (minutes < 1) { studyMsg = { ok: false, t: 'Pon una duración de al menos 1 minuto.' }; render(); return; }
     moreRenderedAt = null;
     studyAction('/api/study/manual', 'POST', { course: f.course.value, minutes, date: f.date.value });
+  } else if (f.dataset.studyForm === 'cycle') {
+    studyAction('/api/study/cycle', 'PUT', { start: f.start.value });
   } else if (f.dataset.studyForm === 'courses') {
     const hidden = [...f.querySelectorAll('[data-course-col]')].filter(i => !i.checked).map(i => i.dataset.courseCol);
     const extra = [...f.querySelectorAll('[data-course-extra]')].filter(i => i.checked).map(i => i.dataset.courseExtra);
@@ -538,6 +542,187 @@ setInterval(() => {
   const el = document.getElementById('study-clock'), a = S.st.items && S.st.items.active;
   if (el && a) el.textContent = clock(Date.now() - a.startedAt);
 }, 1000);
+
+/* ---------- historial del ciclo ---------- */
+const H = { status: 'idle', data: null, err: null };
+const fWeekLbl = new Intl.DateTimeFormat('es-PE', { timeZone: 'UTC', day: 'numeric', month: 'short' });
+const keyUTC = k => new Date(k + 'T12:00:00Z');
+const MAX_SLOTS = 8;
+let histHover = null;
+
+async function loadHistory() {
+  if (H.status === 'loading') return;
+  H.status = 'loading'; renderHistory();
+  try {
+    H.data = await api('/api/study/history');
+    H.status = 'ok'; H.err = null;
+  } catch (e) {
+    if (e && e.code === 'session') S.session = true;
+    H.status = 'error'; H.err = e;
+  }
+  renderHistory();
+}
+
+function slotOf(h, course) {
+  const i = h.courses.indexOf(course);
+  return i >= 0 && i < MAX_SLOTS ? 's' + (i + 1) : 's-other';
+}
+function weekRangeLabel(w) {
+  const a = keyUTC(w.start), b = keyUTC(w.end);
+  return `${fWeekLbl.format(a)} – ${fWeekLbl.format(b)}`;
+}
+/** Paso "limpio" para el eje Y (en minutos), con ≤5 marcas. */
+function niceStep(maxMin) {
+  for (const h of [1, 2, 5, 10, 20, 50]) if (maxMin / (h * 60) <= 5) return h * 60;
+  return 100 * 60;
+}
+
+function renderHistory() {
+  const box = $('history');
+  if (!box) return;
+  if (H.status === 'loading' && !H.data) { box.innerHTML = '<div class="skel"></div>'; return; }
+  if (H.status === 'error' && !H.data) { box.innerHTML = errorBox(TT, H.err); return; }
+  const h = H.data;
+  if (!h) { box.innerHTML = ''; return; }
+
+  const done = h.weeks.filter(w => w.start < h.currentWeek);
+  const avg = done.length ? done.reduce((a, w) => a + w.total, 0) / done.length : h.total;
+  const series = h.courses.slice(0, MAX_SLOTS);
+  const hasOther = h.otherTotal > 0 || h.courses.length > MAX_SLOTS;
+
+  let out = `<div class="hist-head">
+    <div class="hist-stats">
+      <div class="stat"><span class="l">Total del ciclo</span><span class="v">${fmtMin(h.total)}</span></div>
+      <div class="stat"><span class="l">Promedio por semana</span><span class="v">${fmtMin(avg)}</span></div>
+      <div class="stat"><span class="l">Semanas</span><span class="v">${h.weeks.length}</span></div>
+    </div>
+    <form class="sform cycle-form" data-study-form="cycle"><label>Inicio del ciclo<span class="row"><input type="date" name="start" value="${esc(h.cycleStart)}" max="${esc(h.weeks.at(-1).end)}"><button type="submit">Guardar</button></span></label></form>
+  </div>`;
+  if (h.truncated) out += `<p class="hint">Se muestran las últimas ${h.weeks.length} semanas.</p>`;
+
+  if (!h.total) {
+    out += '<div class="empty">Aún no hay horas registradas en este ciclo. Usa ▶ en «Empezar a estudiar» o agrega sesiones a mano.</div>';
+    box.innerHTML = out; return;
+  }
+
+  // leyenda (siempre, ≥2 series)
+  out += '<div class="legend" aria-hidden="true">' + series.map(c => `<span><i class="sw ${slotOf(h, c)}"></i>${esc(c)}</span>`).join('')
+    + (hasOther ? '<span><i class="sw s-other"></i>Otros</span>' : '')
+    + (h.goalTotalMinutes ? `<span><i class="goal-key"></i>Meta semanal (${fmtMin(h.goalTotalMinutes)})</span>` : '') + '</div>';
+  out += `<div class="chart-wrap" id="hist-chart" role="img" aria-label="Horas de estudio por semana y curso. La tabla de abajo tiene los mismos datos."></div>`;
+
+  // totales por curso
+  const maxTot = Math.max(1, ...series.map(c => h.totals[c] || 0), h.otherTotal);
+  const nWeeks = Math.max(1, h.weeks.length);
+  out += '<div class="hist-totals"><span class="eyebrow">Por curso en el ciclo</span>' + series.concat(hasOther ? ['__other'] : []).map(c => {
+    const other = c === '__other', v = other ? h.otherTotal : (h.totals[c] || 0);
+    return `<div class="ht-row"><span class="ht-name"><i class="sw ${other ? 's-other' : slotOf(h, c)}"></i>${esc(other ? 'Otros' : c)}</span>
+      <svg class="ht-bar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="${other ? 's-other' : slotOf(h, c)}" x="0" y="0" height="8" width="${Math.max(v ? 1.5 : 0, (v / maxTot) * 100).toFixed(2)}" rx="2"/></svg>
+      <span class="ht-val mono">${fmtMin(v)}<span class="muted"> · ${fmtMin(v / nWeeks)}/sem</span></span></div>`;
+  }).join('') + '</div>';
+
+  // tabla
+  out += `<details class="hist-table"><summary>Ver como tabla</summary><div class="tbl-scroll"><table>
+    <thead><tr><th>Semana</th>${series.map(c => `<th>${esc(c)}</th>`).join('')}${hasOther ? '<th>Otros</th>' : ''}<th>Total</th></tr></thead><tbody>`
+    + h.weeks.slice().reverse().map(w => `<tr${w.start === h.currentWeek ? ' class="cur"' : ''}><td>${esc(weekRangeLabel(w))}${w.start === h.currentWeek ? ' (esta)' : ''}</td>${series.map(c => `<td class="mono">${w.byCourse[c] ? fmtMin(w.byCourse[c]) : '—'}</td>`).join('')}${hasOther ? `<td class="mono">${w.other ? fmtMin(w.other) : '—'}</td>` : ''}<td class="mono"><b>${fmtMin(w.total)}</b></td></tr>`).join('')
+    + '</tbody></table></div></details>';
+
+  box.innerHTML = out;
+  drawHistoryChart();
+}
+
+function roundedTop(x, y, w, hgt, r) {
+  r = Math.min(r, w / 2, hgt);
+  return `M${x},${y + hgt}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hgt}Z`;
+}
+
+function drawHistoryChart() {
+  const wrap = document.getElementById('hist-chart'), h = H.data;
+  if (!wrap || !h) return;
+  const W = Math.max(280, wrap.clientWidth), Hh = 220;
+  const m = { l: 40, r: 8, t: 20, b: 26 };
+  const iw = W - m.l - m.r, ih = Hh - m.t - m.b;
+  const n = h.weeks.length, band = iw / n, bw = Math.min(24, Math.max(6, band * 0.62));
+  const maxMin = Math.max(60, ...h.weeks.map(w => w.total), h.goalTotalMinutes || 0);
+  const step = niceStep(maxMin), top = Math.ceil(maxMin / step) * step;
+  const y = v => m.t + ih - (v / top) * ih;
+  const series = h.courses.slice(0, MAX_SLOTS);
+  const labelEvery = n > 18 ? 3 : n > 10 ? 2 : 1;
+
+  let g = '';
+  for (let v = 0; v <= top; v += step) {
+    g += `<line class="grid${v === 0 ? ' base' : ''}" x1="${m.l}" x2="${W - m.r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>`;
+    g += `<text class="tick" x="${m.l - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${v / 60} h</text>`;
+  }
+  h.weeks.forEach((w, i) => {
+    const cx = m.l + band * i + band / 2, x = cx - bw / 2;
+    const segs = series.map(c => [slotOf(h, c), w.byCourse[c] || 0]).filter(s => s[1] > 0);
+    const otherMin = w.other + h.courses.slice(MAX_SLOTS).reduce((a, c) => a + (w.byCourse[c] || 0), 0);
+    if (otherMin > 0) segs.push(['s-other', otherMin]);
+    let acc = 0;
+    g += `<g class="col${histHover === i ? ' on' : ''}${histHover !== null && histHover !== i ? ' dim' : ''}">`;
+    segs.forEach(([cls, v], k) => {
+      const y0 = y(acc), y1 = y(acc + v), isTop = k === segs.length - 1;
+      const hgt = Math.max(0, y0 - y1 - (isTop || y0 - y1 < 3 ? 0 : 2));
+      g += isTop ? `<path class="${cls}" d="${roundedTop(x, y1, bw, hgt, 4)}"/>` : `<rect class="${cls}" x="${x.toFixed(1)}" y="${(y0 - hgt).toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}"/>`;
+      acc += v;
+    });
+    g += '</g>';
+    // Etiqueta cada labelEvery semanas, y siempre la última; se omite la que quedaría pegada a la última.
+    if ((i % labelEvery === 0 && n - 1 - i >= labelEvery) || i === n - 1) {
+      const cur = w.start === h.currentWeek;
+      g += `<text class="xl${cur ? ' cur' : ''}" x="${cx.toFixed(1)}" y="${Hh - 8}" text-anchor="middle">${cur ? 'Esta' : esc(fWeekLbl.format(keyUTC(w.start)))}</text>`;
+    }
+    g += `<rect class="hit" data-i="${i}" x="${(m.l + band * i).toFixed(1)}" y="${m.t}" width="${band.toFixed(1)}" height="${ih}"/>`;
+  });
+  if (h.goalTotalMinutes) {
+    const gy = y(h.goalTotalMinutes).toFixed(1);
+    g += `<line class="goal" x1="${m.l}" x2="${W - m.r}" y1="${gy}" y2="${gy}"/><text class="goal-lbl" x="${W - m.r}" y="${(+gy - 5).toFixed(1)}" text-anchor="end">Meta ${fmtMin(h.goalTotalMinutes)}</text>`;
+  }
+  wrap.innerHTML = `<svg width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}">${g}</svg><div class="tip" id="hist-tip" hidden></div>`;
+  if (histHover !== null) showTip(histHover);
+}
+
+function showTip(i) {
+  const h = H.data, tip = document.getElementById('hist-tip'), wrap = document.getElementById('hist-chart');
+  if (!h || !tip || !wrap) return;
+  const w = h.weeks[i];
+  const rows = h.courses.slice(0, MAX_SLOTS).filter(c => w.byCourse[c]).map(c => `<div class="tr"><i class="sw ${slotOf(h, c)}"></i><span>${esc(c)}</span><b class="mono">${fmtMin(w.byCourse[c])}</b></div>`);
+  const otherMin = w.other + h.courses.slice(MAX_SLOTS).reduce((a, c) => a + (w.byCourse[c] || 0), 0);
+  if (otherMin) rows.push(`<div class="tr"><i class="sw s-other"></i><span>Otros</span><b class="mono">${fmtMin(otherMin)}</b></div>`);
+  tip.innerHTML = `<div class="th">${esc(weekRangeLabel(w))}${w.start === h.currentWeek ? ' · esta semana' : ''}</div>`
+    + (rows.length ? rows.join('') : '<div class="muted">Sin horas</div>')
+    + `<div class="tt"><span>Total</span><b class="mono">${fmtMin(w.total)}</b></div>`
+    + (h.goalTotalMinutes ? `<div class="muted">Meta ${fmtMin(h.goalTotalMinutes)}</div>` : '');
+  tip.hidden = false;
+  const hit = wrap.querySelector(`.hit[data-i="${i}"]`);
+  const bx = hit.getBBox(), tw = tip.offsetWidth, W = wrap.clientWidth;
+  let left = bx.x + bx.width / 2 + 12;
+  if (left + tw > W) left = bx.x + bx.width / 2 - tw - 12;
+  tip.style.left = Math.max(0, left) + 'px';
+  tip.style.top = '8px';
+}
+
+function setHover(i) {
+  if (histHover === i) return;
+  histHover = i;
+  drawHistoryChart();
+  if (i === null) { const t = document.getElementById('hist-tip'); if (t) t.hidden = true; }
+}
+
+document.addEventListener('pointermove', ev => {
+  const hit = ev.target.closest && ev.target.closest('#hist-chart .hit');
+  if (hit) setHover(Number(hit.dataset.i));
+  else if (histHover !== null && !(ev.target.closest && ev.target.closest('#hist-chart'))) setHover(null);
+});
+document.addEventListener('pointerleave', () => setHover(null));
+document.getElementById('history-wrap').addEventListener('toggle', ev => {
+  if (ev.target.open && H.status !== 'loading') loadHistory();
+});
+if (window.ResizeObserver) {
+  let t = null;
+  new ResizeObserver(() => { clearTimeout(t); t = setTimeout(drawHistoryChart, 120); }).observe(document.getElementById('history'));
+}
 
 /* ---------- colores de calendario ---------- */
 // La CSP no permite style="" en el HTML: el color va en data-color y se aplica por CSSOM.
@@ -588,6 +773,9 @@ document.addEventListener('click', ev => {
     return;
   }
   if (studyClick(ev)) return;
+  const hit = ev.target.closest('#hist-chart .hit');
+  if (hit) { setHover(histHover === Number(hit.dataset.i) ? null : Number(hit.dataset.i)); return; }
+  if (histHover !== null && !ev.target.closest('#hist-chart')) setHover(null);
   if (ev.target.closest('[data-reload]')) location.reload();
 });
 $('refresh-btn').addEventListener('click', refreshAll);

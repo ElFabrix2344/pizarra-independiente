@@ -61,6 +61,14 @@ function focusStore(now: Date): MockFocus[] {
     // Cronómetro de TickTick sin tarea: no se sabe el curso → "Otros".
     mk(1, 100, 25, { note: 'Estudio libre' }),
   ];
+  // Historial: sesiones de la pizarra en las 9 semanas anteriores (valores deterministas).
+  const courses = ['Estadística Aplicada', 'EPP', 'HEE'];
+  for (let w = 1; w <= 9; w++) {
+    courses.forEach((c, i) => {
+      const minutes = ((w * 37 + i * 53) % 150) + 30;
+      focuses!.push(mk(1, w * 7 * 24 * 60 + i * 24 * 60, minutes, { note: 'Pizarra · ' + c }));
+    });
+  }
   return focuses;
 }
 

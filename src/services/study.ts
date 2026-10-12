@@ -6,6 +6,7 @@
 //  - El cronómetro en curso y las metas semanales viven en KV (no son secretos).
 
 import {
+  splitRange,
   parseTickTickDate,
   TickTickError,
   type TickTickClient,
@@ -36,6 +37,8 @@ export interface StudySettings {
   hidden: string[];
   /** Cursos agregados a mano, que no son columnas de TickTick. */
   extra: string[];
+  /** Inicio del ciclo ("YYYY-MM-DD") para el historial. */
+  cycleStart?: string;
 }
 
 /** Cursos visibles: columnas de TickTick no ocultas + los agregados a mano. */
@@ -62,7 +65,7 @@ export class StudyStore {
   }
   async getSettings(): Promise<StudySettings> {
     const s = await this.kv.get<StudySettings>(K_SETTINGS, 'json');
-    return { goals: s?.goals ?? {}, hidden: s?.hidden ?? [], extra: s?.extra ?? [] };
+    return { goals: s?.goals ?? {}, hidden: s?.hidden ?? [], extra: s?.extra ?? [], ...(s?.cycleStart ? { cycleStart: s.cycleStart } : {}) };
   }
   setSettings(s: StudySettings) {
     return this.kv.put(K_SETTINGS, JSON.stringify(s));
@@ -162,10 +165,16 @@ export async function loadCourses(client: TickTickClient, now = Date.now()): Pro
 }
 
 /** Curso de un registro hecho desde la app de TickTick, por la columna de su tarea (o el título). */
-async function courseFromTask(client: TickTickClient, f: TickTickFocus, cat: CourseCatalog): Promise<string | null> {
+async function courseFromTask(
+  client: TickTickClient,
+  f: TickTickFocus,
+  cat: CourseCatalog,
+  budget: { lookups: number } = { lookups: Infinity },
+): Promise<string | null> {
   const taskId = f.taskId ?? f.tasks?.find((t) => t.taskId)?.taskId;
   if (taskId && cat.inboxId) {
-    if (!taskColumnCache.has(taskId)) {
+    if (!taskColumnCache.has(taskId) && budget.lookups > 0) {
+      budget.lookups--;
       let col: string | null = null;
       try {
         const task = await client.getTask(cat.inboxId, taskId);
@@ -214,8 +223,65 @@ export interface StudyResult {
   goalTotalMinutes: number;
   active: ActiveTimer | null;
   sessions: StudySession[];
+  /** Inicio del ciclo usado por el historial. */
+  cycleStart: string;
   /** Todos los cursos posibles, para la configuración (columnas + agregados). */
   courseOptions: Array<{ name: string; source: 'ticktick' | 'extra'; visible: boolean }>;
+}
+
+/** Ventana máxima de GET /focus (el servidor recorta a 30 días). */
+const FOCUS_WINDOW_MS = 29 * 24 * 3600 * 1000;
+
+/** Registros de enfoque (pomodoro y cronómetro) en [from, to], con su curso. Más recientes primero. */
+async function collectSessions(
+  client: TickTickClient,
+  cat: CourseCatalog,
+  settings: StudySettings,
+  from: Date,
+  to: Date,
+  budget: { lookups: number } = { lookups: Infinity },
+): Promise<StudySession[]> {
+  const windows = splitRange(from, to, FOCUS_WINDOW_MS);
+  const pages = await Promise.all(
+    windows.flatMap(([a, b]) =>
+      ([0, 1] as const).map((type) =>
+        client.listFocuses({ from: a, to: b, type }).then((r) => r.map((x) => ({ ...x, type }))),
+      ),
+    ),
+  );
+  const seen = new Set<string>();
+  const records = pages.flat().filter((r) => {
+    const k = r.type + ':' + r.id;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  const known = [...new Set([...cat.courses, ...settings.extra])];
+  const sessions: StudySession[] = [];
+  for (const f of records) {
+    const start = parseTickTickDate(f.startTime);
+    if (!start || start < from || start > to) continue;
+    const seconds = focusSeconds(f);
+    if (seconds <= 0) continue;
+    const fromPizarra = !!f.note?.startsWith(NOTE_PREFIX);
+    const course = fromPizarra
+      ? courseFromNote(f.note, known)
+      : await courseFromTask(client, f, { ...cat, courses: known }, budget);
+    sessions.push({
+      id: f.id,
+      type: f.type,
+      course,
+      start: start.toISOString(),
+      end: parseTickTickDate(f.endTime)?.toISOString() ?? null,
+      minutes: Math.round(seconds / 60),
+      source: fromPizarra ? 'pizarra' : 'ticktick',
+      label: fromPizarra
+        ? f.note!.includes(' · manual') ? 'manual' : 'pizarra'
+        : (f.tasks?.[0]?.title ?? f.note ?? (f.type === 0 ? 'Pomodoro' : 'Cronómetro')),
+    });
+  }
+  return sessions.sort((a, b) => b.start.localeCompare(a.start));
 }
 
 export async function getStudy(
@@ -225,40 +291,13 @@ export async function getStudy(
 ): Promise<StudyResult> {
   const { now, timeZone: tz } = opts;
   const w = weekRange(now, tz);
-  const [cat, settings, active, pomos, timings] = await Promise.all([
+  const [cat, settings, active] = await Promise.all([
     loadCourses(client, now.getTime()),
     store.getSettings(),
     store.getActive(),
-    client.listFocuses({ from: w.from, to: w.to, type: 0 }),
-    client.listFocuses({ from: w.from, to: w.to, type: 1 }),
   ]);
-  const records: Array<TickTickFocus & { type: TickTickFocusType }> = [
-    ...pomos.map((f) => ({ ...f, type: 0 as const })),
-    ...timings.map((f) => ({ ...f, type: 1 as const })),
-  ];
-
+  const sessions = await collectSessions(client, cat, settings, w.from, w.to);
   const visible = visibleCourses(cat, settings);
-  const known = [...new Set([...cat.courses, ...settings.extra])];
-  const sessions: StudySession[] = [];
-  for (const f of records) {
-    const start = parseTickTickDate(f.startTime);
-    if (!start || start < w.from || start > w.to) continue;
-    const seconds = focusSeconds(f);
-    if (seconds <= 0) continue;
-    const fromPizarra = !!f.note?.startsWith(NOTE_PREFIX);
-    const course = fromPizarra ? courseFromNote(f.note, known) : await courseFromTask(client, f, { ...cat, courses: known });
-    sessions.push({
-      id: f.id,
-      type: f.type,
-      course,
-      start: start.toISOString(),
-      end: parseTickTickDate(f.endTime)?.toISOString() ?? null,
-      minutes: Math.round(seconds / 60),
-      source: fromPizarra ? 'pizarra' : 'ticktick',
-      label: fromPizarra ? (f.note!.includes(' · manual') ? 'manual' : 'pizarra') : (f.tasks?.[0]?.title ?? f.note ?? (f.type === 0 ? 'Pomodoro' : 'Cronómetro')),
-    });
-  }
-  sessions.sort((a, b) => b.start.localeCompare(a.start));
 
   const byCourse = new Map<string, number>();
   let other = 0;
@@ -283,11 +322,112 @@ export async function getStudy(
     goalTotalMinutes: courses.reduce((a, c) => a + (c.goalMinutes ?? 0), 0),
     active,
     sessions,
+    cycleStart: settings.cycleStart ?? defaultCycleStart(w.monday),
     courseOptions: [
       ...cat.courses.map((name) => ({ name, source: 'ticktick' as const, visible: visible.includes(name) })),
       ...settings.extra.map((name) => ({ name, source: 'extra' as const, visible: true })),
     ],
   };
+}
+
+// ---------- historial del ciclo ----------
+
+export const MAX_HISTORY_WEEKS = 26;
+/** Búsquedas de tareas por petición (Workers gratis: 50 subpeticiones en total). */
+const HISTORY_LOOKUPS = 25;
+
+/** Sin fecha configurada: 12 semanas contando la actual. */
+export function defaultCycleStart(currentMonday: string): string {
+  return addDays(currentMonday, -7 * 11);
+}
+
+export interface HistoryWeek {
+  start: string; // lunes
+  end: string; // domingo
+  byCourse: Record<string, number>;
+  other: number;
+  total: number;
+}
+
+export interface HistoryResult {
+  generatedAt: string;
+  cycleStart: string;
+  /** Primer lunes mostrado (posterior a cycleStart si el ciclo supera MAX_HISTORY_WEEKS). */
+  from: string;
+  currentWeek: string;
+  courses: string[];
+  weeks: HistoryWeek[];
+  totals: Record<string, number>;
+  otherTotal: number;
+  total: number;
+  goalTotalMinutes: number;
+  truncated: boolean;
+}
+
+export async function getHistory(
+  client: TickTickClient,
+  store: StudyStore,
+  opts: { now: Date; timeZone: string },
+): Promise<HistoryResult> {
+  const { now, timeZone: tz } = opts;
+  const w = weekRange(now, tz);
+  const [cat, settings] = await Promise.all([loadCourses(client, now.getTime()), store.getSettings()]);
+  const cycleStart = settings.cycleStart ?? defaultCycleStart(w.monday);
+  let first = mondayOf(cycleStart);
+  if (first > w.monday) first = w.monday;
+  const earliest = addDays(w.monday, -7 * (MAX_HISTORY_WEEKS - 1));
+  const truncated = first < earliest;
+  if (truncated) first = earliest;
+
+  const mondays: string[] = [];
+  for (let m = first; m <= w.monday; m = addDays(m, 7)) mondays.push(m);
+
+  const sessions = await collectSessions(client, cat, settings, startOfDay(first, tz), w.to, {
+    lookups: HISTORY_LOOKUPS,
+  });
+  const visible = visibleCourses(cat, settings);
+  const weeks: HistoryWeek[] = mondays.map((m) => ({ start: m, end: addDays(m, 6), byCourse: {}, other: 0, total: 0 }));
+  const index = new Map(mondays.map((m, i) => [m, i]));
+  const totals: Record<string, number> = Object.fromEntries(visible.map((c) => [c, 0]));
+  let otherTotal = 0;
+  for (const s of sessions) {
+    const i = index.get(mondayOf(dayKeyInZone(new Date(s.start), tz)));
+    const wk = i === undefined ? undefined : weeks[i];
+    if (!wk) continue;
+    wk.total += s.minutes;
+    if (s.course && visible.includes(s.course)) {
+      wk.byCourse[s.course] = (wk.byCourse[s.course] ?? 0) + s.minutes;
+      totals[s.course] = (totals[s.course] ?? 0) + s.minutes;
+    } else {
+      wk.other += s.minutes;
+      otherTotal += s.minutes;
+    }
+  }
+  return {
+    generatedAt: now.toISOString(),
+    cycleStart,
+    from: first,
+    currentWeek: w.monday,
+    courses: visible,
+    weeks,
+    totals,
+    otherTotal,
+    total: weeks.reduce((a, x) => a + x.total, 0),
+    goalTotalMinutes: visible.reduce((a, c) => a + (settings.goals[c] ?? 0), 0),
+    truncated,
+  };
+}
+
+export async function saveCycleStart(store: StudyStore, start: unknown, opts: { now: Date; timeZone: string }) {
+  const today = dayKeyInZone(opts.now, opts.timeZone);
+  if (typeof start !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(start) || Number.isNaN(Date.parse(start + 'T12:00:00Z'))) {
+    throw new ApiError('bad_request', 400, 'Fecha de inicio inválida.');
+  }
+  if (start > today) throw new ApiError('bad_request', 400, 'El ciclo no puede empezar en el futuro.');
+  if (start < addDays(today, -366)) throw new ApiError('bad_request', 400, 'La fecha es de hace más de un año.');
+  const settings = await store.getSettings();
+  await store.setSettings({ ...settings, cycleStart: start });
+  return { cycleStart: start };
 }
 
 // ---------- acciones ----------

@@ -6,7 +6,7 @@ import { handleOAuth } from './oauth';
 import { connectionStatus, getGoogleAccessToken, getTickTickClient } from './providers';
 import { getPanelCalendar } from './services/calendar';
 import { getEvaluations, getPanelTasks, ttCall, type Strategy } from './services/tasks';
-import { addManual, getStudy, saveCourses, saveGoals, startStudy, stopStudy, StudyStore } from './services/study';
+import { addManual, getHistory, getStudy, saveCourses, saveCycleStart, saveGoals, startStudy, stopStudy, StudyStore } from './services/study';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -81,6 +81,11 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
         const { client } = await getTickTickClient(env, url);
         return json(await ttCall(() => getStudy(client, studyStore(env, url), { now: new Date(), timeZone: tz })));
       }
+
+      case '/api/study/history': {
+        const { client } = await getTickTickClient(env, url);
+        return json(await ttCall(() => getHistory(client, studyStore(env, url), { now: new Date(), timeZone: tz })));
+      }
     }
   }
 
@@ -117,6 +122,7 @@ async function studyAction(req: Request, env: Env, url: URL, tz: string): Promis
     return json({ ok: true });
   }
   if (p === '/api/study/manual' && req.method === 'POST') return json(await ttCall(() => addManual(client, store, body, { now: new Date(), timeZone: tz })));
+  if (p === '/api/study/cycle' && req.method === 'PUT') return json(await saveCycleStart(store, body.start, { now: new Date(), timeZone: tz }));
   if (p === '/api/study/courses' && req.method === 'PUT') return json(await ttCall(() => saveCourses(client, store, body)));
   if (p === '/api/study/goals' && req.method === 'PUT') return json(await ttCall(() => saveGoals(client, store, body.goals)));
 

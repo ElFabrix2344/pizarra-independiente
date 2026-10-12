@@ -29,6 +29,8 @@ Todas las rutas exigen sesión de Cloudflare Access.
 | GET | `/api/study` | Horas de estudio de la semana por curso, metas, cronómetro activo y sesiones |
 | POST | `/api/study/start` · `/stop` · `/cancel` | Cronómetro de estudio (`{ "course": "HEE" }` al empezar) |
 | POST | `/api/study/manual` | Sesión a mano: `{ "course", "minutes", "date" }` |
+| GET | `/api/study/history` | Horas por semana y curso desde el inicio del ciclo |
+| PUT | `/api/study/cycle` | Inicio del ciclo: `{ "start": "2026-08-10" }` |
 | PUT | `/api/study/courses` | Cursos visibles: `{ "hidden": ["EFE"], "extra": ["Inglés"] }` |
 | PUT | `/api/study/goals` | Metas semanales en minutos: `{ "goals": { "HEE": 300 } }` |
 | DELETE | `/api/study/sessions/:type/:id` | Borra un registro de enfoque (`type` 0 = pomodoro, 1 = cronómetro) |
@@ -238,6 +240,7 @@ npm run typecheck
 - **Desde la app de TickTick**: los pomodoros o cronómetros iniciados sobre una tarea también cuentan; el curso sale de la columna de la tarea (o de su título). Sin tarea, van a «Otros».
 - **A mano**: curso, duración y día (hasta 60 días atrás).
 - **Metas**: horas por semana por curso, guardadas en KV. La semana va de lunes a domingo (hora de Lima).
+- **Historial del ciclo** (panel desplegable, se carga al abrirlo): columnas apiladas por semana y curso desde el **inicio del ciclo** (editable; por defecto, 12 semanas), línea de la meta semanal total, detalle por semana al pasar el cursor o tocar, totales y promedio por curso y vista de tabla. Máximo 26 semanas. La paleta del gráfico está validada para daltonismo y contraste en claro y oscuro.
 
 ## Notas sobre las APIs (verificadas en la documentación oficial)
 

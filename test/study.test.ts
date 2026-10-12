@@ -163,3 +163,47 @@ describe('cursos visibles', () => {
     expect(r.goals).toEqual({ HEE: 240 });
   });
 });
+
+describe('historial del ciclo', () => {
+  it('semanas desde el inicio del ciclo hasta la actual, con totales coherentes', async () => {
+    const { getHistory, saveCycleStart } = await import('../src/services/study');
+    const now = new Date();
+    const store = new StudyStore(memKV());
+    const w = weekRange(now, TZ);
+    const tenAgo = new Date(w.from.getTime() - 10 * 7 * 86400000 + 12 * 3600000).toISOString().slice(0, 10);
+    await saveCycleStart(store, tenAgo, { now, timeZone: TZ });
+    const h = await getHistory(client(), store, { now, timeZone: TZ });
+    expect(h.weeks.length).toBe(11);
+    expect(h.weeks.at(-1)!.start).toBe(w.monday);
+    expect(h.currentWeek).toBe(w.monday);
+    expect(h.courses).toEqual(['Estadística Aplicada', 'EPP', 'HEE']);
+    for (const wk of h.weeks) {
+      const sum = Object.values(wk.byCourse).reduce((a, b) => a + b, 0) + wk.other;
+      expect(sum).toBe(wk.total);
+    }
+    const byCourse = Object.values(h.totals).reduce((a, b) => a + b, 0) + h.otherTotal;
+    expect(byCourse).toBe(h.total);
+    // las semillas del mock dan horas a semanas anteriores
+    expect(h.weeks.slice(0, -1).some((wk) => wk.total > 0)).toBe(true);
+    expect(h.truncated).toBe(false);
+  });
+  it('sin fecha configurada usa 12 semanas; un ciclo muy largo se recorta a 26', async () => {
+    const { getHistory, saveCycleStart, MAX_HISTORY_WEEKS } = await import('../src/services/study');
+    const now = new Date();
+    const store = new StudyStore(memKV());
+    expect((await getHistory(client(), store, { now, timeZone: TZ })).weeks.length).toBe(12);
+    const longAgo = new Date(now.getTime() - 40 * 7 * 86400000).toISOString().slice(0, 10);
+    await saveCycleStart(store, longAgo, { now, timeZone: TZ });
+    const h = await getHistory(client(), store, { now, timeZone: TZ });
+    expect(h.weeks.length).toBe(MAX_HISTORY_WEEKS);
+    expect(h.truncated).toBe(true);
+  });
+  it('valida la fecha de inicio', async () => {
+    const { saveCycleStart } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    const opts = { now: new Date(), timeZone: TZ };
+    await expect(saveCycleStart(store, '2999-01-01', opts)).rejects.toMatchObject({ status: 400 });
+    await expect(saveCycleStart(store, 'ayer', opts)).rejects.toMatchObject({ status: 400 });
+    await expect(saveCycleStart(store, '2001-01-01', opts)).rejects.toMatchObject({ status: 400 });
+  });
+});
