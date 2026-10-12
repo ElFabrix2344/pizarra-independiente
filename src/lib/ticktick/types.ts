@@ -113,7 +113,10 @@ export interface TickTickFocus {
   createdTime?: string;
   modifiedTime?: string;
   etag?: string;
-  /** Segundos (en la doc: 09:00→09:25 = 1500). */
+  /**
+   * Ojo con la unidad: la doc da a entender segundos (09:00→09:25 = 1500), pero GET /focus
+   * la devuelve en milisegundos (69 s → 69000). Mejor calcular con startTime/endTime.
+   */
   duration?: number;
   relationType?: number[];
 }

@@ -45,7 +45,10 @@ describe('utilidades de estudio', () => {
     expect(w.to.toISOString()).toBe('2026-10-19T04:59:59.000Z');
   });
   it('segundos de un registro', () => {
+    // Registro real devuelto por TickTick: 69 s con "duration": 69000 (milisegundos).
+    expect(focusSeconds({ id: 'real', type: 1, note: 'Pizarra · HEE', startTime: '2026-10-12T15:16:24+0000', endTime: '2026-10-12T15:17:33+0000', pauseDuration: 0, duration: 69000 })).toBe(69);
     expect(focusSeconds({ id: 'a', duration: 1500 })).toBe(1500);
+    expect(focusSeconds({ id: 'ms', duration: 1_500_000 })).toBe(1500);
     expect(focusSeconds({ id: 'b', startTime: '2026-04-07T09:00:00+0800', endTime: '2026-04-07T09:25:00+0800', pauseDuration: 60 })).toBe(1440);
   });
   it('curso desde la nota y desde el título', () => {

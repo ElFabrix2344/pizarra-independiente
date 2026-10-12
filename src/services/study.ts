@@ -86,10 +86,20 @@ export function weekRange(now: Date, tz: string) {
 
 /** Segundos de un registro: `duration`, o fin - inicio - pausas. */
 export function focusSeconds(f: TickTickFocus): number {
-  if (typeof f.duration === 'number' && f.duration > 0) return f.duration;
+  // La doc sugiere que `duration` va en segundos, pero en la práctica GET /focus lo devuelve en
+  // milisegundos (una sesión de 69 s llegó como 69000). Por eso se usa inicio/fin, que no tienen unidad.
   const s = parseTickTickDate(f.startTime), e = parseTickTickDate(f.endTime);
-  if (!s || !e) return 0;
-  return Math.max(0, Math.round((e.getTime() - s.getTime()) / 1000) - (f.pauseDuration ?? 0));
+  if (s && e && e > s) {
+    const span = Math.round((e.getTime() - s.getTime()) / 1000);
+    let pause = f.pauseDuration ?? 0;
+    if (pause > span) pause = Math.round(pause / 1000); // por si también viniera en ms
+    return Math.max(0, span - pause);
+  }
+  if (typeof f.duration === 'number' && f.duration > 0) {
+    // Sin horas: una sesión de más de 24 h en segundos no es realista → son milisegundos.
+    return f.duration > 86_400 ? Math.round(f.duration / 1000) : f.duration;
+  }
+  return 0;
 }
 
 const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();

@@ -49,7 +49,7 @@ function focusStore(now: Date): MockFocus[] {
       type,
       startTime: formatTickTickDate(start),
       endTime: formatTickTickDate(new Date(start.getTime() + minutes * 60000)),
-      duration: minutes * 60,
+      duration: minutes * 60000, // TickTick real devuelve milisegundos
       ...extra,
     };
   };
@@ -180,7 +180,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
     }
     if (p === '/open/v1/focus' && req.method === 'POST') {
       const b = (await req.json()) as Omit<MockFocus, 'id'>;
-      const f: MockFocus = { ...b, id: 'f' + ++focusSeq };
+      // Como TickTick real: guarda la duración en milisegundos a partir de las horas.
+      const ms = parseTickTickDate(b.endTime)!.getTime() - parseTickTickDate(b.startTime)!.getTime();
+      const f: MockFocus = { ...b, duration: ms, id: 'f' + ++focusSeq };
       focusStore(now).push(f);
       return json(f);
     }
