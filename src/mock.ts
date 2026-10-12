@@ -20,8 +20,49 @@ const projects: TickTickProject[] = [
 const columns = [
   { id: 'c-hacer', projectId: 'p-cursob', name: 'Por hacer' },
   { id: 'c-curso', projectId: 'p-cursob', name: 'En curso' },
-  { id: 'c-hee', projectId: 'inbox1234', name: 'HEE' },
+  { id: 'c-est', projectId: 'inbox1234', name: 'Estadística Aplicada', sortOrder: 0 },
+  { id: 'c-epp', projectId: 'inbox1234', name: 'EPP', sortOrder: 100 },
+  { id: 'c-hee', projectId: 'inbox1234', name: 'HEE', sortOrder: 200 },
+  { id: 'c-per', projectId: 'inbox1234', name: 'Personal', sortOrder: 500 },
+  { id: 'c-ns', projectId: 'inbox1234', name: 'Not Sectioned', sortOrder: 66036 },
 ];
+
+// Registros de enfoque (pomodoro / cronómetro) en memoria.
+interface MockFocus {
+  id: string;
+  type: 0 | 1;
+  note?: string;
+  taskId?: string;
+  tasks?: Array<{ taskId?: string; title?: string }>;
+  startTime: string;
+  endTime: string;
+  duration: number;
+}
+let focuses: MockFocus[] | null = null;
+let focusSeq = 0;
+function focusStore(now: Date): MockFocus[] {
+  if (focuses) return focuses;
+  const mk = (type: 0 | 1, startMinAgo: number, minutes: number, extra: Partial<MockFocus>): MockFocus => {
+    const start = new Date(now.getTime() - startMinAgo * 60000);
+    return {
+      id: 'seed' + ++focusSeq,
+      type,
+      startTime: formatTickTickDate(start),
+      endTime: formatTickTickDate(new Date(start.getTime() + minutes * 60000)),
+      duration: minutes * 60,
+      ...extra,
+    };
+  };
+  focuses = [
+    // Pomodoro desde la app de TickTick sobre una tarea de la columna HEE.
+    mk(0, 300, 50, { taskId: 't-over2', tasks: [{ taskId: 't-over2', title: 'Responder correo del grupo' }] }),
+    // Sesión creada por la pizarra.
+    mk(1, 200, 90, { note: 'Pizarra · EPP' }),
+    // Cronómetro de TickTick sin tarea: no se sabe el curso → "Otros".
+    mk(1, 100, 25, { note: 'Estudio libre' }),
+  ];
+  return focuses;
+}
 
 function tasks(now: Date): TickTickTask[] {
   const t = dayKeyInZone(now, TZ);
@@ -117,7 +158,40 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (url.host === 'api.ticktick.com') {
     if (p === '/open/v1/project' && req.method === 'GET') return json(projects);
     let m = p.match(/^\/open\/v1\/project\/([^/]+)\/column$/);
-    if (m) return json(columns.filter((c) => c.projectId === m![1]));
+    if (m) {
+      const pid = m[1] === 'inbox' ? 'inbox1234' : m[1];
+      return json(columns.filter((c) => c.projectId === pid));
+    }
+    m = p.match(/^\/open\/v1\/project\/([^/]+)\/task\/([^/]+)$/);
+    if (m && req.method === 'GET') {
+      const t = tasks(now).find((x) => x.id === decodeURIComponent(m![2]!) && x.projectId === decodeURIComponent(m![1]!));
+      return t ? json(t) : json(undefined, 404);
+    }
+    if (p === '/open/v1/focus' && req.method === 'GET') {
+      const type = Number(url.searchParams.get('type'));
+      const from = parseTickTickDate(url.searchParams.get('from'))!.getTime();
+      const to = parseTickTickDate(url.searchParams.get('to'))!.getTime();
+      return json(
+        focusStore(now).filter((f) => {
+          const st = parseTickTickDate(f.startTime)!.getTime();
+          return f.type === type && st >= from && st <= to;
+        }),
+      );
+    }
+    if (p === '/open/v1/focus' && req.method === 'POST') {
+      const b = (await req.json()) as Omit<MockFocus, 'id'>;
+      const f: MockFocus = { ...b, id: 'f' + ++focusSeq };
+      focusStore(now).push(f);
+      return json(f);
+    }
+    m = p.match(/^\/open\/v1\/focus\/([^/]+)$/);
+    if (m && req.method === 'DELETE') {
+      const list = focusStore(now);
+      const i = list.findIndex((f) => f.id === decodeURIComponent(m![1]!));
+      if (i < 0) return json(undefined, 404);
+      const [gone] = list.splice(i, 1);
+      return json({ id: gone!.id, type: gone!.type });
+    }
     m = p.match(/^\/open\/v1\/project\/([^/]+)\/data$/);
     if (m) {
       const id = decodeURIComponent(m[1]!);

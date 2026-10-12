@@ -6,6 +6,7 @@ import { handleOAuth } from './oauth';
 import { connectionStatus, getGoogleAccessToken, getTickTickClient } from './providers';
 import { getPanelCalendar } from './services/calendar';
 import { getEvaluations, getPanelTasks, ttCall, type Strategy } from './services/tasks';
+import { addManual, getStudy, saveGoals, startStudy, stopStudy, StudyStore } from './services/study';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -75,8 +76,15 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
 
       case '/api/debug/ticktick':
         return json(await debugTickTick(env, url, tz));
+
+      case '/api/study': {
+        const { client } = await getTickTickClient(env, url);
+        return json(await ttCall(() => getStudy(client, studyStore(env, url), { now: new Date(), timeZone: tz })));
+      }
     }
   }
+
+  if (p.startsWith('/api/study/')) return studyAction(req, env, url, tz);
 
   const m = p.match(/^\/api\/tasks\/([^/]+)\/([^/]+)\/complete$/);
   if (m) {
@@ -91,6 +99,52 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
   }
 
   throw new ApiError('not_found', 404, 'Ruta no encontrada.');
+}
+
+/** Acciones de estudio (todas modifican estado: POST/PUT/DELETE con protección CSRF). */
+async function studyAction(req: Request, env: Env, url: URL, tz: string): Promise<Response> {
+  if (req.method === 'GET') throw new ApiError('bad_request', 405, 'Método no permitido.');
+  assertSameOrigin(req, url);
+  const { client } = await getTickTickClient(env, url);
+  const store = studyStore(env, url);
+  const p = url.pathname;
+  const body = req.method === 'DELETE' ? {} : await readJson(req);
+
+  if (p === '/api/study/start' && req.method === 'POST') return json(await ttCall(() => startStudy(client, store, body.course)));
+  if (p === '/api/study/stop' && req.method === 'POST') return json(await ttCall(() => stopStudy(client, store)));
+  if (p === '/api/study/cancel' && req.method === 'POST') {
+    await store.clearActive();
+    return json({ ok: true });
+  }
+  if (p === '/api/study/manual' && req.method === 'POST') return json(await ttCall(() => addManual(client, body, { now: new Date(), timeZone: tz })));
+  if (p === '/api/study/goals' && req.method === 'PUT') return json(await ttCall(() => saveGoals(client, store, body.goals)));
+
+  const m = p.match(/^\/api\/study\/sessions\/([01])\/([^/]+)$/);
+  if (m && req.method === 'DELETE') {
+    const id = decodeURIComponent(m[2]!);
+    if (!ID_RE.test(id)) throw new ApiError('bad_request', 400, 'Identificador inválido.');
+    await ttCall(() => client.deleteFocus(id, Number(m[1]) as 0 | 1));
+    return json({ ok: true, id });
+  }
+  throw new ApiError('not_found', 404, 'Ruta no encontrada.');
+}
+
+/** Cronómetro activo y metas: en el mismo KV (en local, el KV simulado de wrangler dev). */
+function studyStore(env: Env, _url: URL) {
+  return new StudyStore(env.TOKENS);
+}
+
+async function readJson(req: Request): Promise<Record<string, unknown>> {
+  const text = await req.text();
+  if (text.length > 10_000) throw new ApiError('bad_request', 413, 'Cuerpo demasiado grande.');
+  if (!text) return {};
+  try {
+    const v = JSON.parse(text);
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
+  } catch {
+    /* cae al error */
+  }
+  throw new ApiError('bad_request', 400, 'JSON inválido.');
 }
 
 /** Si el access token en caché fue revocado, Google responde 401: se descarta y se reintenta una vez. */

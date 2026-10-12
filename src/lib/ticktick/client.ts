@@ -4,7 +4,14 @@
 
 import { formatTickTickDate } from './dates';
 import { TickTickError } from './errors';
-import type { TickTickColumn, TickTickProject, TickTickProjectData, TickTickTask } from './types';
+import type {
+  TickTickColumn,
+  TickTickFocus,
+  TickTickFocusType,
+  TickTickProject,
+  TickTickProjectData,
+  TickTickTask,
+} from './types';
 
 export const TICKTICK_API_BASE = 'https://api.ticktick.com/open/v1';
 
@@ -133,6 +140,41 @@ export class TickTickClient {
     const byId = new Map<string, TickTickTask>();
     for (const page of pages) for (const t of page) byId.set(t.id, t);
     return [...byId.values()];
+  }
+
+  // ---------- enfoque (pomodoro / cronómetro) ----------
+
+  /** GET /focus?from&to&type — registros en un rango (el servidor lo recorta a 30 días). */
+  listFocuses(q: { from: Date; to: Date; type: TickTickFocusType }): Promise<TickTickFocus[]> {
+    const p = new URLSearchParams({ from: formatTickTickDate(q.from), to: formatTickTickDate(q.to), type: String(q.type) });
+    return this.request<TickTickFocus[]>('GET', `/focus?${p}`).then((r) => r ?? []);
+  }
+
+  /** POST /focus — crea un registro. `duration` en segundos. */
+  createFocus(f: {
+    type: TickTickFocusType;
+    startTime: Date;
+    endTime: Date;
+    duration?: number;
+    pauseDuration?: number;
+    taskId?: string;
+    note?: string;
+  }): Promise<TickTickFocus> {
+    const body: Record<string, unknown> = {
+      type: f.type,
+      startTime: formatTickTickDate(f.startTime),
+      endTime: formatTickTickDate(f.endTime),
+      duration: f.duration ?? Math.round((f.endTime.getTime() - f.startTime.getTime()) / 1000),
+    };
+    if (f.pauseDuration !== undefined) body.pauseDuration = f.pauseDuration;
+    if (f.taskId) body.taskId = f.taskId;
+    if (f.note) body.note = f.note.slice(0, 5000);
+    return this.request<TickTickFocus>('POST', '/focus', body);
+  }
+
+  /** DELETE /focus/{id}?type= */
+  async deleteFocus(focusId: string, type: TickTickFocusType): Promise<void> {
+    await this.request<unknown>('DELETE', `/focus/${enc(focusId)}?type=${type}`);
   }
 
   /** POST /task/filter — hasta 200 tareas; el rango de fechas se aplica a startDate. */

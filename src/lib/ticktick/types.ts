@@ -82,5 +82,41 @@ export interface TickTickTokenResponse {
   refresh_token?: string;
 }
 
+/** Tipo de registro de enfoque: Pomodoro 0, Timing (cronómetro) 1. */
+export type TickTickFocusType = 0 | 1;
+
+export interface TickTickFocusTaskBrief {
+  taskId?: string;
+  title?: string;
+  habitId?: string;
+  timerId?: string;
+  timerName?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
+/** OpenFocus: un registro de enfoque (sesión de pomodoro o cronómetro). */
+export interface TickTickFocus {
+  id: string;
+  userId?: number;
+  type?: TickTickFocusType;
+  taskId?: string;
+  note?: string;
+  tasks?: TickTickFocusTaskBrief[];
+  status?: number;
+  startTime?: string;
+  endTime?: string;
+  /** Segundos. */
+  pauseDuration?: number;
+  adjustTime?: number;
+  added?: boolean;
+  createdTime?: string;
+  modifiedTime?: string;
+  etag?: string;
+  /** Segundos (en la doc: 09:00→09:25 = 1500). */
+  duration?: number;
+  relationType?: number[];
+}
+
 /** Scopes disponibles según la doc. */
 export type TickTickScope = 'tasks:read' | 'tasks:write';

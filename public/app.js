@@ -53,6 +53,7 @@ const S = {
   cal: { status: 'loading', items: [], at: null, err: null },
   tt: { status: 'loading', items: [], at: null, err: null },
   ev: { status: 'loading', items: [], at: null, err: null },
+  st: { status: 'loading', items: null, at: null, err: null },
   refreshing: false,
   session: false,
 };
@@ -63,6 +64,7 @@ const SOURCES = {
   cal: { path: '/api/calendar', pick: b => b.events.map(toEvent) },
   tt: { path: '/api/tasks', pick: b => b.tasks.map(toTask) },
   ev: { path: '/api/evaluations', pick: b => b.evaluations.map(toTask) },
+  st: { path: '/api/study', pick: b => b },
 };
 
 async function load(name) {
@@ -357,8 +359,174 @@ function renderDate() {
   $('today-label').innerHTML = `${esc(cap(fWeekday.format(d)))} <span class="dnum">${esc(fDayNum.format(d))}</span><span class="mon">de ${esc(fMonth.format(d).toLocaleLowerCase('es'))}</span>`;
 }
 
+/* ---------- estudio ---------- */
+const fDayShort = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, weekday: 'short', day: 'numeric' });
+let studyMsg = null, studyArmed = null, studyArmTimer = null, studyBusy = false, moreRenderedAt = null, moreDirty = false;
+
+function fmtMin(m) {
+  m = Math.max(0, Math.round(m));
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60), r = m % 60;
+  return h + ' h' + (r ? ' ' + String(r).padStart(2, '0') : '');
+}
+function clock(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map(n => String(n).padStart(2, '0')).join(':');
+}
+
+async function studyAction(path, method, body) {
+  if (studyBusy) return;
+  studyBusy = true; studyMsg = null; render();
+  try {
+    const r = await api(path, {
+      method,
+      headers: { 'X-Pizarra': '1', 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (path.endsWith('/stop')) studyMsg = r.saved ? { ok: true, t: `Guardado: ${fmtMin(r.minutes)} de ${r.course}${r.capped ? ' (recortado a 12 h)' : ''}.` } : { ok: false, t: r.reason };
+    else if (path.endsWith('/manual')) { studyMsg = { ok: true, t: `Sesión agregada: ${fmtMin(r.minutes)} de ${r.course}.` }; moreDirty = false; }
+    else if (path.endsWith('/goals')) { studyMsg = { ok: true, t: 'Metas guardadas.' }; moreDirty = false; }
+    else if (method === 'DELETE') studyMsg = { ok: true, t: 'Sesión borrada.' };
+    return r;
+  } catch (e) {
+    if (e && e.code === 'session') S.session = true;
+    studyMsg = { ok: false, t: e && e.message ? e.message : 'No se pudo completar la acción.' };
+  } finally {
+    studyBusy = false;
+    await load('st');
+    render();
+  }
+}
+
+function renderStudy() {
+  const s = S.st, main = $('study-main'), d = s.items;
+  if (s.status === 'loading' && !s.at) { main.innerHTML = '<div class="skel"></div><div class="skel"></div>'; $('study-total').textContent = ''; return; }
+  if (s.status === 'error' || !d) { main.innerHTML = errorBox(TT, s.err); $('study-total').textContent = ''; return; }
+
+  const goalTotal = d.goalTotalMinutes;
+  $('study-total').innerHTML = `Total <b>${fmtMin(d.totalMinutes)}</b>${goalTotal ? ` / ${fmtMin(goalTotal)}` : ''}`;
+
+  // Cronómetro
+  let t = '';
+  const msg = studyMsg ? `<span class="msg ${studyMsg.ok ? 'good' : 'bad'}">${esc(studyMsg.t)}</span>` : '';
+  if (d.active) {
+    const isArmed = studyArmed === 'cancel';
+    t = `<div class="timer running">
+      <div class="t-head"><span class="pill"><span class="dot" aria-hidden="true"></span>Estudiando</span><span class="t-course">${esc(d.active.course)}</span></div>
+      <span class="t-clock mono" id="study-clock">${clock(Date.now() - d.active.startedAt)}</span>
+      <span class="muted">Desde las ${fTime.format(new Date(d.active.startedAt))}${dayKey(new Date(d.active.startedAt)) !== today() ? ' de ' + esc(fDay.format(new Date(d.active.startedAt))) : ''}</span>
+      <div class="t-actions"><button type="button" data-study-stop${studyBusy ? ' disabled' : ''}>■ Parar y guardar</button><button type="button" class="ghost${isArmed ? ' armed' : ''}" data-study-cancel${studyBusy ? ' disabled' : ''}>${isArmed ? '¿Descartar? Toca otra vez' : 'Descartar'}</button></div>
+      ${msg}</div>`;
+  } else {
+    t = `<div class="timer"><span class="eyebrow">Empezar a estudiar</span>
+      <div class="course-btns">${d.courses.map(c => `<button type="button" data-study-start="${esc(c.name)}"${studyBusy ? ' disabled' : ''}>▶ ${esc(c.name)}</button>`).join('')}<button type="button" data-study-start="General"${studyBusy ? ' disabled' : ''}>▶ General</button></div>
+      <span class="muted">El tiempo se guarda en TickTick al parar. También cuenta lo que cronometres desde la app de TickTick sobre una tarea del curso.</span>
+      ${msg}</div>`;
+  }
+
+  // Metas
+  let g = '<div class="goals"><span class="eyebrow">Metas de la semana</span>';
+  for (const c of d.courses) {
+    if (c.goalMinutes) {
+      const met = c.minutes >= c.goalMinutes;
+      g += `<div class="goal${met ? ' met' : ''}"><div class="g-top"><span class="g-name">${esc(c.name)}</span><span class="g-val mono">${met ? '✓ ' : ''}${fmtMin(c.minutes)} <span class="muted">/ ${fmtMin(c.goalMinutes)}</span></span></div><progress max="${c.goalMinutes}" value="${Math.min(c.minutes, c.goalMinutes)}" aria-label="${esc(c.name)}: ${fmtMin(c.minutes)} de ${fmtMin(c.goalMinutes)}"></progress></div>`;
+    } else {
+      g += `<div class="goal nogoal"><div class="g-top"><span class="g-name">${esc(c.name)}</span><span class="g-val mono">${fmtMin(c.minutes)} <span class="muted">· sin meta</span></span></div></div>`;
+    }
+  }
+  if (d.otherMinutes) g += `<div class="goal nogoal"><div class="g-top"><span class="g-name">Otros / General</span><span class="g-val mono">${fmtMin(d.otherMinutes)}</span></div></div>`;
+  if (!d.courses.some(c => c.goalMinutes)) g += '<p class="hint">Pon una meta semanal por curso en «metas», aquí abajo.</p>';
+  g += '</div>';
+  main.innerHTML = t + g;
+
+  // Panel desplegable: solo se redibuja con datos nuevos y si no lo estás editando.
+  const more = $('study-more');
+  if (moreRenderedAt !== s.at && !moreDirty && !more.contains(document.activeElement)) {
+    moreRenderedAt = s.at;
+    more.innerHTML = renderStudyMore(d);
+  } else if (studyArmed && studyArmed !== 'cancel') {
+    more.querySelectorAll('[data-study-del]').forEach(b => {
+      const on = b.dataset.studyDel === studyArmed;
+      b.classList.toggle('armed', on); b.textContent = on ? '¿Borrar?' : 'Borrar';
+    });
+  }
+}
+
+function renderStudyMore(d) {
+  const opts = d.courses.map(c => `<option>${esc(c.name)}</option>`).join('') + '<option>General</option>';
+  const manual = `<form class="sform" data-study-form="manual"><h3>Agregar sesión</h3>
+    <label>Curso<select name="course">${opts}</select></label>
+    <label>Duración<span class="row"><input name="h" type="number" min="0" max="12" value="1" inputmode="numeric" aria-label="Horas"> h <input name="m" type="number" min="0" max="59" step="5" value="0" inputmode="numeric" aria-label="Minutos"> min</span></label>
+    <label>Día<input name="date" type="date" value="${d.today}" max="${d.today}"></label>
+    <button type="submit">Guardar sesión</button></form>`;
+  const goals = `<form class="sform" data-study-form="goals"><h3>Metas semanales</h3>
+    ${d.courses.map(c => `<label class="goal-row">${esc(c.name)}<span class="row"><input type="number" min="0" max="80" step="0.5" data-goal="${esc(c.name)}" value="${c.goalMinutes ? +(c.goalMinutes / 60).toFixed(2) : ''}" placeholder="0" aria-label="Horas por semana para ${esc(c.name)}"> h</span></label>`).join('')}
+    <button type="submit">Guardar metas</button></form>`;
+  const list = d.sessions.length
+    ? '<ul class="sessions">' + d.sessions.map(x => {
+      const key = x.type + '/' + x.id;
+      const src = x.source === 'pizarra' ? (x.label === 'manual' ? 'a mano' : 'pizarra') : 'TickTick · ' + x.label;
+      return `<li><span class="s-main">${esc(x.course || 'Otros')} · ${fmtMin(x.minutes)}</span><span class="s-sub">${esc(cap(fDayShort.format(new Date(x.start))))} · ${fTime.format(new Date(x.start))} · ${esc(src)}</span><button type="button" data-study-del="${esc(key)}" class="${studyArmed === key ? 'armed' : ''}">${studyArmed === key ? '¿Borrar?' : 'Borrar'}</button></li>`;
+    }).join('') + '</ul>'
+    : '<p class="hint">Aún no hay sesiones esta semana.</p>';
+  return manual + goals + `<div><h3>Sesiones de la semana</h3>${list}</div>`;
+}
+
+function armStudy(key) {
+  studyArmed = key; clearTimeout(studyArmTimer); render();
+  studyArmTimer = setTimeout(() => { studyArmed = null; render(); }, 4000);
+}
+
+/** Clicks de la sección de estudio. Devuelve true si los manejó. */
+function studyClick(ev) {
+  const st = ev.target.closest('[data-study-start]');
+  if (st) { studyAction('/api/study/start', 'POST', { course: st.dataset.studyStart }); return true; }
+  if (ev.target.closest('[data-study-stop]')) { studyAction('/api/study/stop', 'POST', {}); return true; }
+  if (ev.target.closest('[data-study-cancel]')) {
+    if (studyArmed !== 'cancel') { armStudy('cancel'); return true; }
+    studyArmed = null; clearTimeout(studyArmTimer);
+    studyAction('/api/study/cancel', 'POST', {}).then(() => { studyMsg = { ok: true, t: 'Cronómetro descartado.' }; render(); });
+    return true;
+  }
+  const del = ev.target.closest('[data-study-del]');
+  if (del) {
+    const key = del.dataset.studyDel;
+    if (studyArmed !== key) { armStudy(key); return true; }
+    studyArmed = null; clearTimeout(studyArmTimer);
+    const [type, id] = key.split('/');
+    moreRenderedAt = null;
+    studyAction(`/api/study/sessions/${type}/${encodeURIComponent(id)}`, 'DELETE');
+    return true;
+  }
+  return false;
+}
+
+document.addEventListener('submit', ev => {
+  const f = ev.target.closest('[data-study-form]');
+  if (!f) return;
+  ev.preventDefault();
+  if (f.dataset.studyForm === 'manual') {
+    const minutes = (Number(f.h.value) || 0) * 60 + (Number(f.m.value) || 0);
+    if (minutes < 1) { studyMsg = { ok: false, t: 'Pon una duración de al menos 1 minuto.' }; render(); return; }
+    moreRenderedAt = null;
+    studyAction('/api/study/manual', 'POST', { course: f.course.value, minutes, date: f.date.value });
+  } else {
+    const goals = {};
+    f.querySelectorAll('[data-goal]').forEach(i => { const h = Number(i.value); if (h > 0) goals[i.dataset.goal] = Math.round(h * 60); });
+    moreRenderedAt = null;
+    studyAction('/api/study/goals', 'PUT', { goals });
+  }
+});
+document.addEventListener('input', ev => { if (ev.target.closest('#study-more')) moreDirty = true; });
+
+// Reloj del cronómetro: cada segundo, solo el texto.
+setInterval(() => {
+  const el = document.getElementById('study-clock'), a = S.st.items && S.st.items.active;
+  if (el && a) el.textContent = clock(Date.now() - a.startedAt);
+}, 1000);
+
 function render() {
-  renderDate(); renderBanner(); renderHero(); renderCounts(); renderExams(); renderCal(); renderTT();
+  renderDate(); renderBanner(); renderHero(); renderCounts(); renderExams(); renderStudy(); renderCal(); renderTT();
   setFresh($('fresh-cal'), freshText(S.cal));
   setFresh($('fresh-tt'), freshText(S.tt, S.ev));
   const gs = $('global-status');
@@ -393,6 +561,7 @@ document.addEventListener('click', ev => {
     document.querySelector('[data-toggle-past]')?.focus();
     return;
   }
+  if (studyClick(ev)) return;
   if (ev.target.closest('[data-reload]')) location.reload();
 });
 $('refresh-btn').addEventListener('click', refreshAll);
