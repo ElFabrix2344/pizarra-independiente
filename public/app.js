@@ -96,6 +96,8 @@ async function load(name) {
 }
 
 async function refreshAll() {
+  // El historial (y el mapa de constancia) pesa más: se recarga cada 30 min o tras una acción de estudio.
+  if (typeof H !== 'undefined' && H.status !== 'loading' && (!H.loadedAt || Date.now() - H.loadedAt > 30 * 60 * 1000)) loadHistory();
   if (S.refreshing) return;
   S.refreshing = true; render();
   loadedDay = today(); lastRefresh = Date.now();
@@ -418,7 +420,7 @@ async function studyAction(path, method, body) {
     studyBusy = false;
     await load('st');
     render();
-    if (document.getElementById('history-wrap').open) loadHistory();
+    loadHistory();
   }
 }
 
@@ -582,12 +584,13 @@ async function loadHistory() {
   H.status = 'loading'; renderHistory();
   try {
     H.data = await api('/api/study/history');
-    H.status = 'ok'; H.err = null;
+    H.status = 'ok'; H.err = null; H.loadedAt = Date.now();
   } catch (e) {
     if (e && e.code === 'session') S.session = true;
     H.status = 'error'; H.err = e;
   }
   renderHistory();
+  renderStreak();
 }
 
 function slotOf(h, course) {
@@ -744,7 +747,8 @@ document.addEventListener('pointermove', ev => {
 });
 document.addEventListener('pointerleave', () => setHover(null));
 document.getElementById('history-wrap').addEventListener('toggle', ev => {
-  if (ev.target.open && H.status !== 'loading') loadHistory();
+  if (ev.target.open && H.status !== 'loading' && !H.data) loadHistory();
+  else if (ev.target.open) drawHistoryChart();
 });
 if (window.ResizeObserver) {
   let t = null;
@@ -975,6 +979,84 @@ function gradeInfoFor(x) {
   if (n.status === 'secured' || n.status === 'done') return `${fmtN(item.weight)} % · ${what} asegurado`;
   return `${fmtN(item.weight)} %`;
 }
+
+/* ---------- constancia (mapa de días) ---------- */
+const fDayTip = new Intl.DateTimeFormat('es-PE', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
+const fMonShort = new Intl.DateTimeFormat('es-PE', { timeZone: 'UTC', month: 'short' });
+const HEAT_BINS = [1, 30, 60, 120, 180]; // minutos: cada umbral abre un nivel (1–5)
+const heatLevel = m => { let l = 0; HEAT_BINS.forEach((b, i) => { if (m >= b) l = i + 1; }); return l; };
+
+function renderStreak() {
+  const el = $('streak');
+  if (!el) return;
+  const h = H.data;
+  if (!h || !h.streak) { el.innerHTML = H.status === 'loading' ? '<div class="skel"></div>' : ''; return; }
+  const s = h.streak;
+  const keep = !s.todayDone && s.current > 0 ? '<span class="st-keep">Estudia hoy para mantenerla</span>' : '';
+  let out = `<div class="st-head"><span class="eyebrow">Constancia</span>
+    <div class="st-stats">
+      <div class="stat"><span class="v">${s.current}</span><span class="l">${s.current === 1 ? 'día' : 'días'} de racha${s.todayDone ? ' · hoy ✓' : ''}</span>${keep}</div>
+      <div class="stat"><span class="v">${s.best}</span><span class="l">mejor racha</span></div>
+      <div class="stat"><span class="v">${s.activeDays}<small>/${s.totalDays}</small></span><span class="l">días con estudio</span></div>
+    </div></div>`;
+  out += `<div class="heat-wrap" id="heat-wrap">${heatSvg(h, el.clientWidth - 36)}<div class="tip" id="heat-tip" hidden></div></div>`;
+  out += `<div class="heat-legend" aria-hidden="true"><span>Menos</span>${[1, 2, 3, 4, 5].map(l => `<i class="hl${l}"></i>`).join('')}<span>Más</span><span class="muted">· 1 min, 30 min, 1 h, 2 h, 3 h+</span></div>`;
+  el.innerHTML = out;
+}
+
+function heatSvg(h, avail) {
+  const gap = 3, left = 18, top = 16, n = h.weeks.length;
+  // Cuadritos que llenan el ancho disponible (entre 12 y 22 px); en el celular, el SVG escala hacia abajo.
+  const cell = Math.max(12, Math.min(22, Math.floor(((avail || 0) - left) / n) - gap));
+  const step = cell + gap, W = left + n * step, Hh = top + 7 * step;
+  const start = h.cycleStart > h.from ? h.cycleStart : h.from;
+  let g = '';
+  ['L', '', 'X', '', 'V', '', ''].forEach((t, r) => { if (t) g += `<text class="hx" x="0" y="${top + r * step + cell / 2 + 4}">${t}</text>`; });
+  let lastMonth = '';
+  h.weeks.forEach((w, c) => {
+    const x = left + c * step;
+    // Etiqueta de mes en la primera columna y en la semana donde empieza un mes nuevo.
+    const monthOf = k => fMonShort.format(keyUTC(k)).replace('.', '').toLocaleLowerCase('es');
+    const firstIdx = [0, 1, 2, 3, 4, 5, 6].find(r => addDays(w.start, r).endsWith('-01'));
+    const lbl = c === 0 ? monthOf(w.start) : firstIdx !== undefined ? monthOf(addDays(w.start, firstIdx)) : null;
+    if (lbl && lbl !== lastMonth) { g += `<text class="hx" x="${x}" y="10">${esc(lbl)}</text>`; lastMonth = lbl; }
+    for (let r = 0; r < 7; r++) {
+      const k = addDays(w.start, r);
+      if (k > h.today || k < start) continue;
+      const m = h.days[k] || 0;
+      g += `<rect class="hc hl${heatLevel(m)}${k === h.today ? ' today' : ''}" x="${x}" y="${top + r * step}" width="${cell}" height="${cell}" rx="${cell > 16 ? 3 : 2}" data-k="${k}" data-m="${m}"/>`;
+    }
+  });
+  const label = `Mapa de constancia: ${h.streak.activeDays} de ${h.streak.totalDays} días con estudio`;
+  return `<svg class="heat" width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="${esc(label)}">${g}</svg>`;
+}
+
+function showHeatTip(cellEl) {
+  const tip = document.getElementById('heat-tip'), wrap = document.getElementById('heat-wrap');
+  if (!tip || !wrap) return;
+  if (!cellEl) { tip.hidden = true; return; }
+  const k = cellEl.dataset.k, m = Number(cellEl.dataset.m);
+  tip.innerHTML = `<b>${esc(cap(fDayTip.format(keyUTC(k))))}</b><span>${m ? fmtMin(m) + ' de estudio' : 'Sin estudio'}</span>`;
+  tip.hidden = false;
+  const r = cellEl.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+  let leftPx = r.left - wr.left + r.width / 2 - tip.offsetWidth / 2;
+  leftPx = Math.max(0, Math.min(leftPx, wrap.clientWidth - tip.offsetWidth));
+  tip.style.left = leftPx + 'px';
+  tip.style.top = (r.top - wr.top - tip.offsetHeight - 6) + 'px';
+}
+if (window.ResizeObserver) {
+  let t2 = null, lastW = 0;
+  new ResizeObserver(es => { const w = Math.round(es[0].contentRect.width); if (w === lastW) return; lastW = w; clearTimeout(t2); t2 = setTimeout(renderStreak, 120); }).observe(document.getElementById('streak'));
+}
+document.addEventListener('pointermove', ev => {
+  const c = ev.target.closest && ev.target.closest('#heat-wrap .hc');
+  if (c) showHeatTip(c);
+  else if (!(ev.target.closest && ev.target.closest('#heat-wrap'))) showHeatTip(null);
+});
+document.addEventListener('click', ev => {
+  const c = ev.target.closest('#heat-wrap .hc');
+  if (c) showHeatTip(c); else if (!ev.target.closest('#heat-wrap')) showHeatTip(null);
+});
 
 /* ---------- colores de calendario ---------- */
 // La CSP no permite style="" en el HTML: el color va en data-color y se aplica por CSSOM.

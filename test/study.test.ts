@@ -250,3 +250,24 @@ describe('pausa del cronómetro', () => {
     expect(activeMs({ course: 'HEE', startedAt: 1000 }, 61000)).toBe(60000);
   });
 });
+
+describe('constancia (rachas)', () => {
+  it('racha actual, mejor racha y días activos', async () => {
+    const { computeStreak } = await import('../src/services/study');
+    const d = { '2026-10-01': 30, '2026-10-02': 45, '2026-10-03': 10, '2026-10-05': 60, '2026-10-06': 20, '2026-10-07': 90 };
+    expect(computeStreak(d, '2026-10-01', '2026-10-07')).toEqual({ current: 3, todayDone: true, best: 3, activeDays: 6, totalDays: 7 });
+    // hoy aún sin estudiar: la racha cuenta hasta ayer y sigue viva
+    expect(computeStreak(d, '2026-10-01', '2026-10-08')).toMatchObject({ current: 3, todayDone: false });
+    // un día entero sin estudiar la corta
+    expect(computeStreak(d, '2026-10-01', '2026-10-09')).toMatchObject({ current: 0, todayDone: false, best: 3, activeDays: 6, totalDays: 9 });
+    expect(computeStreak({}, '2026-10-01', '2026-10-01')).toEqual({ current: 0, todayDone: false, best: 0, activeDays: 0, totalDays: 1 });
+  });
+  it('el historial trae minutos por día coherentes con las semanas', async () => {
+    const { getHistory } = await import('../src/services/study');
+    const h = await getHistory(client(), new StudyStore(memKV()), { now: new Date(), timeZone: TZ });
+    const sumDays = Object.values(h.days).reduce((a, b) => a + b, 0);
+    expect(sumDays).toBe(h.total);
+    expect(h.today).toBe(weekRange(new Date(), TZ).today);
+    expect(h.streak.totalDays).toBeGreaterThan(0);
+  });
+});

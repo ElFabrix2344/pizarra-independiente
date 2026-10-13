@@ -287,6 +287,7 @@ Por qué importa cada regla:
 - **Desde la app de TickTick**: los pomodoros o cronómetros iniciados sobre una tarea también cuentan; el curso sale de la columna de la tarea (o de su título). Sin tarea, van a «Otros».
 - **A mano**: curso, duración y día (hasta 60 días atrás).
 - **Metas**: horas por semana por curso, guardadas en KV. La semana va de lunes a domingo (hora de Lima).
+- **Constancia** (visible en Estudio): un cuadrito por día desde el inicio del ciclo, más intenso cuanto más estudiaste (niveles: 1 min, 30 min, 1 h, 2 h, 3 h+; escala de un tono validada con `--ordinal` en claro y oscuro), con la racha actual (sigue viva hasta que termine el día), la mejor racha y los días con estudio. Usa los mismos datos del historial, que se cargan al abrir la app, tras cada sesión y cada 30 min.
 - **Historial del ciclo** (panel desplegable, se carga al abrirlo): columnas apiladas por semana y curso desde el **inicio del ciclo** (editable; por defecto, 12 semanas), línea de la meta semanal total, detalle por semana al pasar el cursor o tocar, totales y promedio por curso y vista de tabla. Máximo 26 semanas. La paleta del gráfico está validada para daltonismo y contraste en claro y oscuro.
 
 ## Notas sobre las APIs (verificadas en la documentación oficial)
