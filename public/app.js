@@ -810,8 +810,8 @@ function gradeCard(c) {
 function gradeForm(c) {
   const row = i => `<div class="g-row" data-id="${esc(i.id || '')}">
       <input class="gi-name" name="name" value="${esc(i.name || '')}" placeholder="PC1" maxlength="60" aria-label="Evaluación">
-      <label class="gi-w"><input name="weight" type="number" min="0" max="100" step="0.5" value="${i.weight ?? ''}" aria-label="Peso en %">%</label>
-      <input class="gi-g" name="grade" type="number" min="0" max="20" step="0.5" value="${i.grade ?? ''}" placeholder="nota" aria-label="Nota">
+      <label class="gi-w"><input name="weight" type="number" min="0" max="100" step="any" value="${i.weight ?? ''}" aria-label="Peso en %">%</label>
+      <input class="gi-g" name="grade" type="number" min="0" max="20" step="any" value="${i.grade ?? ''}" placeholder="nota" aria-label="Nota">
       <button type="button" class="gi-del" data-g-del title="Quitar evaluación" aria-label="Quitar evaluación">✕</button></div>`;
   const items = c.items.length ? c.items : [{ name: '', weight: '', grade: null }];
   return `<form class="gform" data-g-form="${esc(c.name)}">
