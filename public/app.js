@@ -63,6 +63,7 @@ const S = {
   tt: { status: 'loading', items: [], at: null, err: null },
   ev: { status: 'loading', items: [], at: null, err: null },
   st: { status: 'loading', items: null, at: null, err: null },
+  gr: { status: 'loading', items: null, at: null, err: null },
   refreshing: false,
   session: false,
 };
@@ -76,6 +77,7 @@ const SOURCES = {
   tt: { path: '/api/tasks', pick: b => b.tasks.map(toTask) },
   ev: { path: '/api/evaluations', pick: b => { evIgnored = b.ignoredCount || 0; return b.evaluations.map(toTask); } },
   st: { path: '/api/study', pick: b => b },
+  gr: { path: '/api/grades', pick: b => b },
 };
 
 async function load(name) {
@@ -343,8 +345,9 @@ function renderExams() {
         const urg = d <= 3 ? ' u-crit' : d <= 7 ? ' u-warn' : '';
         const when = esc(fDay.format(x.due)) + (x.allDay ? '' : ' · ' + fTime.format(x.due));
         const lbl = taskLabel(x);
+        const gi = gradeInfoFor(x);
         const armedX = evArmed === x.id;
-        h += `<li class="exam${urg}"><span class="days" aria-label="${d === 0 ? 'hoy' : 'en ' + d + (d === 1 ? ' día' : ' días')}">${num}</span><span class="info"><span class="nm">${esc(x.name)}</span><span class="sub">${lbl ? esc(lbl) + ' · ' : ''}${when}</span></span><button type="button" class="ex-x${armedX ? ' armed' : ''}" data-eval-ignore="${esc(x.id)}" title="No es una evaluación: ocultar" aria-label="${armedX ? 'Confirmar: ocultar' : 'Ocultar'} ${esc(x.name)}">${armedX ? '¿Ocultar?' : '✕'}</button></li>`;
+        h += `<li class="exam${urg}"><span class="days" aria-label="${d === 0 ? 'hoy' : 'en ' + d + (d === 1 ? ' día' : ' días')}">${num}</span><span class="info"><span class="nm">${esc(x.name)}</span><span class="sub">${lbl ? esc(lbl) + ' · ' : ''}${when}</span>${gi ? `<span class="sub gi">${esc(gi)}</span>` : ''}</span><button type="button" class="ex-x${armedX ? ' armed' : ''}" data-eval-ignore="${esc(x.id)}" title="No es una evaluación: ocultar" aria-label="${armedX ? 'Confirmar: ocultar' : 'Ocultar'} ${esc(x.name)}">${armedX ? '¿Ocultar?' : '✕'}</button></li>`;
       }
       h += '</ul>';
     }
@@ -748,6 +751,231 @@ if (window.ResizeObserver) {
   new ResizeObserver(() => { clearTimeout(t); t = setTimeout(drawHistoryChart, 120); }).observe(document.getElementById('history'));
 }
 
+/* ---------- notas ---------- */
+const fold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const fmtN = (n, d = 1) => (n === null || n === undefined ? '—' : Number(n).toFixed(d).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1'));
+let gEditing = null, gRenderedAt = null, gSettingsRenderedAt = null, gMsg = null, gBusy = false, gSettingsDirty = false;
+
+function needText(n, what) {
+  if (!n) return '';
+  if (n.status === 'done') return `${what}: logrado ✓`;
+  if (n.status === 'secured') return `${what}: asegurado aunque saques 0 en lo que falta ✓`;
+  if (n.status === 'impossible') return `${what}: ya no alcanza aunque saques 20 en lo que falta`;
+  return `${what}: necesitas <b>${fmtN(n.average)}</b> de promedio en lo que falta`;
+}
+
+/** Barra 0–20: rango posible (lo asegurado → lo máximo alcanzable), marca del 11, meta y posición actual.
+ *  Las posiciones van en data-l / data-w y se aplican por CSSOM (la CSP no permite style="" en el HTML). */
+function meterHtml(c) {
+  const pct = v => (Math.max(0, Math.min(20, v)) / 20 * 100).toFixed(2);
+  const cls = c.max < 10.5 ? 'bad' : c.min >= 10.5 ? 'good' : 'mid';
+  const p = c.final !== null ? c.earned : c.average;
+  const label = c.final !== null
+    ? `Nota exacta ${fmtN(c.earned, 2)}, final ${c.final}`
+    : `Rango posible de ${fmtN(c.min)} a ${fmtN(c.max)}; aprobatoria 11${c.target ? '; meta ' + c.target : ''}`;
+  let h = `<div class="meter" role="img" aria-label="${esc(label)}"><div class="m-track"></div>`;
+  if (c.final === null) h += `<div class="m-band ${cls}" data-l="${pct(c.min)}" data-w="${Math.max(0.8, pct(c.max) - pct(c.min)).toFixed(2)}"></div>`;
+  h += `<div class="m-mark pass" data-l="${pct(10.5)}"></div>`;
+  if (c.target && c.target > 11) h += `<div class="m-mark goal" data-l="${pct(c.target - 0.5)}"></div>`;
+  if (p !== null) h += `<div class="m-dot ${cls}" data-l="${pct(p)}"></div>`;
+  h += '</div>';
+  const left = c.final !== null ? `Nota exacta ${fmtN(c.earned, 2)} → ${c.final}` : `Rango posible ${fmtN(c.min)} – ${fmtN(c.max)}`;
+  return h + `<div class="m-legend"><span>${left}</span><span><i class="k-pass"></i>11${c.target && c.target > 11 ? ` <i class="k-goal"></i>meta ${c.target}` : ''}</span></div>`;
+}
+
+function applyPositions(root) {
+  root.querySelectorAll('[data-l]').forEach(el => { el.style.left = el.dataset.l + '%'; });
+  root.querySelectorAll('[data-w]').forEach(el => { el.style.width = el.dataset.w + '%'; });
+}
+
+function gradeCard(c) {
+  const head = `<header class="g-head"><h3>${esc(c.name)}</h3><span class="muted">${c.credits ? fmtN(c.credits) + ' cr' : 'sin créditos'}</span>${c.academic ? '' : '<span class="chip">No cuenta en el ponderado</span>'}
+    <button type="button" class="g-edit" data-g-edit="${esc(c.name)}">${c.items.length ? 'Editar' : 'Agregar evaluaciones'}</button></header>`;
+  if (gEditing === c.name) return `<article class="gcard editing">${head}${gradeForm(c)}</article>`;
+  if (!c.items.length) return `<article class="gcard empty-card">${head}<p class="hint">Agrega las evaluaciones del sílabo con su peso; las notas las vas llenando a medida que salen.</p></article>`;
+
+  const state = c.final !== null ? (c.final >= 11 ? 'pass' : 'fail') : c.pass.status === 'impossible' ? 'fail' : c.pass.status === 'secured' ? 'pass' : '';
+  let main;
+  if (c.final !== null) main = `<div class="g-main"><span class="g-big">${c.final}</span><span class="muted">Nota final · ${c.final >= 11 ? 'aprobado ✓' : 'desaprobado'}</span></div>`;
+  else if (c.average !== null) main = `<div class="g-main"><span class="g-big">${fmtN(c.average)}</span><span class="muted">promedio de lo evaluado (${fmtN(c.gradedWeight)} %) · si sigues así: <b>${c.projected}</b></span></div>`;
+  else main = `<div class="g-main"><span class="g-big muted">—</span><span class="muted">Aún sin notas · ${fmtN(c.totalWeight)} % por evaluar</span></div>`;
+
+  const needs = [needText(c.pass, 'Para aprobar (11)'), c.goal ? needText(c.goal, `Para tu meta (${c.goal.target})`) : ''].filter(Boolean)
+    .map(t => `<p class="g-need">${t}</p>`).join('');
+  const rows = c.items.map(i => `<li><span class="gi-name">${esc(i.name)}</span><span class="gi-w mono">${fmtN(i.weight)} %</span><span class="gi-g mono${i.grade === null ? ' muted' : ''}">${i.grade === null ? '—' : fmtN(i.grade)}</span></li>`).join('');
+  return `<article class="gcard ${state}">${head}${main}${meterHtml(c)}${needs}
+    <ul class="g-items">${rows}</ul>${c.weightWarning ? `<p class="g-warn">⚠ ${esc(c.weightWarning)}</p>` : ''}</article>`;
+}
+
+function gradeForm(c) {
+  const row = i => `<div class="g-row" data-id="${esc(i.id || '')}">
+      <input class="gi-name" name="name" value="${esc(i.name || '')}" placeholder="PC1" maxlength="60" aria-label="Evaluación">
+      <label class="gi-w"><input name="weight" type="number" min="0" max="100" step="0.5" value="${i.weight ?? ''}" aria-label="Peso en %">%</label>
+      <input class="gi-g" name="grade" type="number" min="0" max="20" step="0.5" value="${i.grade ?? ''}" placeholder="nota" aria-label="Nota">
+      <button type="button" class="gi-del" data-g-del title="Quitar evaluación" aria-label="Quitar evaluación">✕</button></div>`;
+  const items = c.items.length ? c.items : [{ name: '', weight: '', grade: null }];
+  return `<form class="gform" data-g-form="${esc(c.name)}">
+    <div class="g-rows-head"><span>Evaluación</span><span>Peso</span><span>Nota</span><span></span></div>
+    <div class="g-rows">${items.map(row).join('')}</div>
+    <button type="button" class="g-add" data-g-add>+ Evaluación</button>
+    <p class="g-sumw">Suma de pesos: <b data-g-sum>${fmtN(c.items.reduce((a, i) => a + i.weight, 0))}</b> %</p>
+    <div class="g-actions"><button type="submit">Guardar</button><button type="button" class="ghost" data-g-cancel>Cancelar</button></div>
+  </form>`;
+}
+
+function renderGrades(force = false) {
+  const s = S.gr, body = $('grades-body'), d = s.items;
+  if (!body) return;
+  if (s.status === 'loading' && !s.at) { body.innerHTML = '<div class="skel"></div>'; return; }
+  if (s.status === 'error' || !d) { body.innerHTML = errorBox(TT, s.err); $('grades-sum').textContent = ''; return; }
+
+  const sem = d.semester;
+  $('grades-sum').innerHTML = sem.semester !== null ? `Ponderado proyectado <b>${sem.semester.toFixed(2)}</b>${sem.cumulative !== null ? ` · acumulado <b>${sem.cumulative.toFixed(2)}</b>` : ''}` : '';
+
+  // No redibujar mientras editas (ni con el refresco de cada minuto).
+  if (!force && gRenderedAt === s.at && !gMsg) return;
+  if (!force && gEditing && body.contains(document.activeElement)) return;
+  gRenderedAt = s.at;
+
+  let h = gMsg ? `<p class="msg ${gMsg.ok ? 'good' : 'bad'}">${esc(gMsg.t)}</p>` : '';
+  const missing = sem.missing.length
+    ? `<p class="hint">No entran aún al ponderado: ${sem.missing.map(m => `${esc(m.name)} (${m.reason === 'credits' ? 'faltan créditos' : 'sin notas'})`).join(', ')}.</p>` : '';
+  if (sem.semester !== null || missing) {
+    h += `<div class="g-stats"><div class="stat"><span class="l">Ponderado del ciclo (proyectado)</span><span class="v">${sem.semester !== null ? sem.semester.toFixed(2) : '—'}</span></div>
+      <div class="stat"><span class="l">Acumulado proyectado</span><span class="v">${sem.cumulative !== null ? sem.cumulative.toFixed(2) : '—'}</span>${sem.cumulative === null ? '<span class="hint">Pon tu acumulado anterior en «Créditos, metas y acumulado anterior».</span>' : ''}</div></div>${missing}`;
+  }
+  h += `<div class="g-grid">${d.courses.map(gradeCard).join('')}</div>`;
+  body.innerHTML = h;
+  applyPositions(body);
+
+  const set = $('grades-settings');
+  if (gSettingsRenderedAt !== s.at && !gSettingsDirty && !set.contains(document.activeElement)) {
+    gSettingsRenderedAt = s.at;
+    set.innerHTML = gradeSettings(d);
+  }
+}
+
+function gradeSettings(d) {
+  const rows = d.courses.map(c => `<div class="gs-row" data-course="${esc(c.name)}">
+      <span class="gs-name">${esc(c.name)}</span>
+      <label>Créditos<input name="credits" type="number" min="0" max="30" step="0.5" value="${c.credits ?? ''}"></label>
+      <label>Meta<input name="target" type="number" min="11" max="20" step="1" value="${c.target ?? ''}" placeholder="—"></label>
+      <label class="check-row"><input name="academic" type="checkbox"${c.academic ? ' checked' : ''}> Cuenta en el ponderado</label></div>`).join('');
+  return `<form class="sform gs-form" data-g-settings><h3>Por curso</h3>${rows}<button type="submit">Guardar cursos</button></form>
+    <form class="sform" data-g-prior><h3>Acumulado antes de este ciclo</h3>
+      <p class="hint">Para proyectar tu acumulado al cerrar el ciclo. Usa los créditos académicos que cuenta tu acumulado.</p>
+      <label>Acumulado<input name="average" type="number" min="0" max="20" step="0.01" value="${d.prior.average ?? ''}" placeholder="14.72"></label>
+      <label>Créditos<input name="credits" type="number" min="0" max="400" step="1" value="${d.prior.credits ?? ''}" placeholder="94"></label>
+      <button type="submit">Guardar acumulado</button></form>`;
+}
+
+async function gradesPut(path, body, okText) {
+  if (gBusy) return;
+  gBusy = true; gMsg = null;
+  try {
+    const r = await api(path, { method: 'PUT', headers: { 'X-Pizarra': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    S.gr.items = r; S.gr.at = Date.now(); S.gr.status = 'ok'; S.gr.err = null;
+    gMsg = { ok: true, t: okText }; gEditing = null; gSettingsDirty = false;
+    setTimeout(() => { gMsg = null; renderGrades(true); }, 4000);
+  } catch (e) {
+    if (e && e.code === 'session') S.session = true;
+    gMsg = { ok: false, t: (e && e.message) || 'No se pudo guardar.' };
+  } finally {
+    gBusy = false; renderGrades(true); renderExams();
+  }
+}
+
+function readGradeForm(f) {
+  return [...f.querySelectorAll('.g-row')].map(r => ({
+    id: r.dataset.id || undefined,
+    name: r.querySelector('[name=name]').value.trim(),
+    weight: r.querySelector('[name=weight]').value,
+    grade: r.querySelector('[name=grade]').value,
+  })).filter(i => i.name || i.weight !== '' || i.grade !== '');
+}
+
+function updateWeightSum(f) {
+  const sum = [...f.querySelectorAll('[name=weight]')].reduce((a, i) => a + (Number(i.value) || 0), 0);
+  const el = f.querySelector('[data-g-sum]');
+  if (el) { el.textContent = fmtN(sum); el.parentElement.classList.toggle('bad', Math.abs(sum - 100) >= 0.01); }
+}
+
+function courseByName(name) { return S.gr.items && S.gr.items.courses.find(c => c.name === name); }
+
+/** Clicks de la sección de notas. Devuelve true si los manejó. */
+function gradesClick(ev) {
+  const ed = ev.target.closest('[data-g-edit]');
+  if (ed) { gEditing = ed.dataset.gEdit; gMsg = null; renderGrades(true); document.querySelector('.gcard.editing input')?.focus(); return true; }
+  if (ev.target.closest('[data-g-cancel]')) { gEditing = null; renderGrades(true); return true; }
+  if (ev.target.closest('[data-g-add]')) {
+    const f = ev.target.closest('form');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = gradeForm({ name: '', items: [{ name: '', weight: '', grade: null }] });
+    f.querySelector('.g-rows').appendChild(tmp.querySelector('.g-row'));
+    f.querySelector('.g-rows .g-row:last-child input')?.focus();
+    return true;
+  }
+  const del = ev.target.closest('[data-g-del]');
+  if (del) { const f = del.closest('form'); del.closest('.g-row').remove(); updateWeightSum(f); return true; }
+  return false;
+}
+
+document.addEventListener('submit', ev => {
+  const gf = ev.target.closest('[data-g-form]');
+  if (gf) {
+    ev.preventDefault();
+    const c = courseByName(gf.dataset.gForm);
+    if (!c) return;
+    gradesPut('/api/grades/course', { name: c.name, credits: c.credits, academic: c.academic, target: c.target, items: readGradeForm(gf) }, `Notas de ${c.name} guardadas.`);
+    return;
+  }
+  const gs = ev.target.closest('[data-g-settings]');
+  if (gs) {
+    ev.preventDefault();
+    const rows = [...gs.querySelectorAll('.gs-row')];
+    (async () => {
+      for (const r of rows) {
+        const c = courseByName(r.dataset.course);
+        if (!c) continue;
+        const credits = r.querySelector('[name=credits]').value, target = r.querySelector('[name=target]').value, academic = r.querySelector('[name=academic]').checked;
+        if (String(c.credits ?? '') === credits && String(c.target ?? '') === target && c.academic === academic) continue;
+        await gradesPut('/api/grades/course', { name: c.name, credits, target, academic, items: c.items }, 'Cursos guardados.');
+      }
+    })();
+    return;
+  }
+  const gp = ev.target.closest('[data-g-prior]');
+  if (gp) {
+    ev.preventDefault();
+    gradesPut('/api/grades/prior', { average: gp.average.value, credits: gp.credits.value }, 'Acumulado guardado.');
+  }
+});
+document.addEventListener('input', ev => {
+  const f = ev.target.closest('[data-g-form]');
+  if (f && ev.target.name === 'weight') updateWeightSum(f);
+  if (ev.target.closest('#grades-settings')) gSettingsDirty = true;
+});
+
+/** Peso y nota necesaria de una evaluación próxima, si coincide con una del registro de notas. */
+function gradeInfoFor(x) {
+  const d = S.gr.items;
+  if (!d) return null;
+  const c = d.courses.find(c => [x.column, x.list].some(n => n && fold(n) === fold(c.name)));
+  if (!c) return null;
+  const words = fold(x.name).split(/[^a-z0-9ñ]+/).filter(Boolean);
+  const item = c.items.find(i => {
+    const iw = fold(i.name).split(/[^a-z0-9ñ]+/).filter(Boolean);
+    return iw.length && iw.every(w => words.includes(w));
+  });
+  if (!item) return null;
+  if (item.grade !== null) return `${fmtN(item.weight)} % · nota ${fmtN(item.grade)}`;
+  const n = c.goal || c.pass;
+  const what = c.goal ? 'meta' : 'aprobar';
+  if (n.status === 'possible') return `${fmtN(item.weight)} % · necesitas ${Math.ceil(n.average - 1e-9)} para ${what}`;
+  if (n.status === 'secured' || n.status === 'done') return `${fmtN(item.weight)} % · ${what} asegurado`;
+  return `${fmtN(item.weight)} %`;
+}
+
 /* ---------- colores de calendario ---------- */
 // La CSP no permite style="" en el HTML: el color va en data-color y se aplica por CSSOM.
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -760,7 +988,7 @@ function applyColors() {
 }
 
 function render() {
-  renderDate(); renderBanner(); renderHero(); renderCounts(); renderExams(); renderStudy(); renderCal(); renderTT();
+  renderDate(); renderBanner(); renderHero(); renderCounts(); renderExams(); renderStudy(); renderGrades(); renderCal(); renderTT();
   applyColors();
   setFresh($('fresh-cal'), freshText(S.cal));
   setFresh($('fresh-tt'), freshText(S.tt, S.ev));
@@ -797,6 +1025,7 @@ document.addEventListener('click', ev => {
     return;
   }
   if (studyClick(ev)) return;
+  if (gradesClick(ev)) return;
   const ex = ev.target.closest('[data-eval-ignore]');
   if (ex) {
     const id = ex.dataset.evalIgnore;

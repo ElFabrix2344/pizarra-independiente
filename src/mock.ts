@@ -100,6 +100,8 @@ function tasks(now: Date): TickTickTask[] {
     allDay('e5', 'p-cursoa', 'Trabajo final — Curso A', addDays(t, 40), 3),
     allDay('e6', 'p-cursob', 'Presentación grupal — Curso B', addDays(t, 60), 3),
     allDay('e7', 'p-cursob', 'Parcial fuera de rango (día +80)', addDays(t, 80), 3),
+    // Evaluación en una columna-curso del inbox (para enlazar con el registro de notas).
+    allDay('e8', 'inbox1234', 'Parcial Aplicada', addDays(t, 45), 5, { columnId: 'c-est' }),
     allDay('n1', 'p-personal', 'Leer capítulo 4 (no es evaluación)', addDays(t, 12), 0),
   ].filter((x) => !completed.has(x.id));
 }

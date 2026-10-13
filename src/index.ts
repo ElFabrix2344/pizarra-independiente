@@ -5,11 +5,16 @@ import { GoogleError } from './lib/google';
 import { handleOAuth } from './oauth';
 import { connectionStatus, getGoogleAccessToken, getTickTickClient } from './providers';
 import { getPanelCalendar } from './services/calendar';
+import { buildResult, GradeStore, validateCourse, validatePrior } from './services/grades';
 import { getEvaluations, getIgnoredEvals, getPanelTasks, ignoreEval, restoreEvals, ttCall, type Strategy } from './services/tasks';
 import {
   addManual,
   getHistory,
   getStudy,
+  defaultCycleStart,
+  loadCourses,
+  visibleCourses,
+  weekRange,
   pauseStudy,
   resumeStudy,
   saveCourses,
@@ -95,6 +100,12 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
         return json(await ttCall(() => getStudy(client, studyStore(env, url), { now: new Date(), timeZone: tz })));
       }
 
+      case '/api/grades': {
+        const ctx = await gradesContext(env, url, tz);
+        const book = await ctx.store.get(ctx.cycleStart);
+        return json(buildResult(book, ctx.courses));
+      }
+
       case '/api/study/history': {
         const { client } = await getTickTickClient(env, url);
         return json(await ttCall(() => getHistory(client, studyStore(env, url), { now: new Date(), timeZone: tz })));
@@ -103,6 +114,23 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
   }
 
   if (p.startsWith('/api/study/')) return studyAction(req, env, url, tz);
+
+  if (p === '/api/grades/course' || p === '/api/grades/prior') {
+    if (req.method !== 'PUT') throw new ApiError('bad_request', 405, 'Usa PUT.');
+    assertSameOrigin(req, url);
+    const body = await readJson(req);
+    const ctx = await gradesContext(env, url, tz);
+    const book = await ctx.store.get(ctx.cycleStart);
+    if (p.endsWith('/prior')) {
+      book.prior = validatePrior(body);
+    } else {
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!ctx.courses.includes(name) && !book.courses[name]) throw new ApiError('bad_request', 400, `Curso desconocido: ${name}`);
+      book.courses[name] = validateCourse(body);
+    }
+    await ctx.store.put(book);
+    return json(buildResult(book, ctx.courses));
+  }
 
   // Ocultar una "evaluación" que no lo es (p. ej. una tarea de práctica) o restaurarlas todas.
   if (p === '/api/evaluations/ignore' || p === '/api/evaluations/restore') {
@@ -128,6 +156,19 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
   }
 
   throw new ApiError('not_found', 404, 'Ruta no encontrada.');
+}
+
+/** Ciclo actual y cursos visibles (los mismos de Estudio) para el registro de notas. */
+async function gradesContext(env: Env, url: URL, tz: string) {
+  const { client } = await getTickTickClient(env, url);
+  const study = studyStore(env, url);
+  const now = new Date();
+  const [cat, settings] = await ttCall(() => Promise.all([loadCourses(client, now.getTime()), study.getSettings()]));
+  return {
+    store: new GradeStore(env.TOKENS),
+    cycleStart: settings.cycleStart ?? defaultCycleStart(weekRange(now, tz).monday),
+    courses: visibleCourses(cat, settings),
+  };
 }
 
 /** Acciones de estudio (todas modifican estado: POST/PUT/DELETE con protección CSRF). */

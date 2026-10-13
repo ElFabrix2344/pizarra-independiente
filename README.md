@@ -242,6 +242,21 @@ npm run typecheck
 - **Excepción**: si justo después viene un código de ciclo (`PC2 2026-I — …`, `Parcial 2025-2`, `PC1 26-1`), se entiende como material de un ciclo pasado para practicar y no se muestra.
 - Lo que la regla no detecte se oculta con ✕ (doble toque); «Restaurar» las vuelve a mostrar. La lista de ocultas vive en KV.
 
+## Notas
+
+Registro de notas del ciclo, un libro por ciclo en KV (`grades:<inicio del ciclo>`). Los cursos son los mismos de Estudio.
+
+- **Por curso**: evaluaciones con su peso (%) y su nota (0–20) cuando sale; créditos, si cuenta para el ponderado y una meta opcional.
+- **Cálculos** según el Reglamento de Estudios de Pregrado UP 2023 (art. 28–30 y anexo): se aprueba con 11; la nota del curso redondea desde .5; el ponderado del semestre y el acumulado son Σ(nota × créditos) / Σ créditos con dos decimales **truncados**. Los cursos que no cuentan (REC/NREC, p. ej. EFE) se marcan como «no cuenta en el ponderado».
+- Se muestra: promedio de lo evaluado y proyección, **rango posible** (0 → 20 en lo que falta), cuánto necesitas en promedio para aprobar o para tu meta, **ponderado del ciclo proyectado** y **acumulado proyectado** (con el acumulado y créditos anteriores).
+- En **Próximas evaluaciones**, si la evaluación coincide con una del registro (mismo curso y nombre contenido, p. ej. «Parcial» ↔ «Parcial Aplicada»), aparece su peso y la nota que necesitas.
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| GET | `/api/grades` | Libro de notas del ciclo con todos los cálculos |
+| PUT | `/api/grades/course` | Guarda un curso: `{ name, credits, academic, target, items: [{ name, weight, grade }] }` |
+| PUT | `/api/grades/prior` | Acumulado anterior: `{ average, credits }` |
+
 ## Cómo crear tareas para que Bitácora las lea bien
 
 Las tareas del ciclo (a partir de sílabos o cronogramas) se generan pidiéndoselas a un chat con el conector de TickTick. Para que Bitácora las clasifique bien, pásale estas reglas:
