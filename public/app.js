@@ -454,12 +454,15 @@ function renderStudy() {
       ${msg}</div>`;
   }
 
-  // Metas
-  let g = '<div class="goals"><span class="eyebrow">Metas de la semana</span>';
+  // Metas (con ritmo necesario y pronóstico)
+  const pace = studyPace(d);
+  let g = '<div class="goals"><span class="eyebrow">Metas de la semana</span>' + paceSummary(pace);
   for (const c of d.courses) {
     if (c.goalMinutes) {
-      const met = c.minutes >= c.goalMinutes;
-      g += `<div class="goal${met ? ' met' : ''}"><div class="g-top"><span class="g-name">${esc(c.name)}</span><span class="g-val mono">${met ? '✓ ' : ''}${fmtMin(c.minutes)} <span class="muted">/ ${fmtMin(c.goalMinutes)}</span></span></div><progress max="${c.goalMinutes}" value="${Math.min(c.minutes, c.goalMinutes)}" aria-label="${esc(c.name)}: ${fmtMin(c.minutes)} de ${fmtMin(c.goalMinutes)}"></progress></div>`;
+      const cp = pace.byCourse[c.name];
+      const doneC = cp ? cp.doneWeek : c.minutes;
+      const met = doneC >= c.goalMinutes;
+      g += `<div class="goal${met ? ' met' : ''}"><div class="g-top"><span class="g-name">${esc(c.name)}</span><span class="g-val mono">${met ? '✓ ' : ''}${fmtMin(doneC)} <span class="muted">/ ${fmtMin(c.goalMinutes)}</span></span></div><progress max="${c.goalMinutes}" value="${Math.min(doneC, c.goalMinutes)}" aria-label="${esc(c.name)}: ${fmtMin(doneC)} de ${fmtMin(c.goalMinutes)}"></progress>${coursePaceLine(cp)}</div>`;
     } else {
       g += `<div class="goal nogoal"><div class="g-top"><span class="g-name">${esc(c.name)}</span><span class="g-val mono">${fmtMin(c.minutes)} <span class="muted">· sin meta</span></span></div></div>`;
     }
@@ -480,6 +483,77 @@ function renderStudy() {
       b.classList.toggle('armed', on); b.textContent = on ? '¿Borrar?' : 'Borrar';
     });
   }
+}
+
+/* ---------- ritmo y pronóstico (lógica en pace.js) ---------- */
+/** Minutos de esta semana y de hoy por curso (incluye el cronómetro en marcha) y el plan/pronóstico de cada uno. */
+function studyPace(d) {
+  const today = d.today;
+  const daysLeft = Math.round((keyUTC(d.weekEnd) - keyUTC(today)) / 864e5) + 1;
+  const todayBy = {};
+  for (const x of d.sessions) {
+    if (x.course && dayKey(new Date(x.start)) === today) todayBy[x.course] = (todayBy[x.course] || 0) + x.minutes;
+  }
+  const live = d.active ? activeElapsed(d.active) / 60000 : 0;
+  if (live) todayBy[d.active.course] = (todayBy[d.active.course] || 0) + live;
+
+  // Todo se mide con los cursos que tienen meta. El ritmo real sale de las semanas completas
+  // anteriores del historial (mínimo 2), curso por curso.
+  const h = H.data;
+  const past = h ? h.weeks.filter(w => w.start < h.currentWeek) : [];
+  const enough = past.length >= 2;
+  const goalCourses = d.courses.filter(c => c.goalMinutes);
+
+  const byCourse = {};
+  let todayTarget = 0, todayLeft = 0, perDayAfter = 0, goalTotal = 0, todayDone = 0, perDay = 0, forecast = 0, allMet = true;
+  for (const c of goalCourses) {
+    const doneWeek = c.minutes + (d.active && d.active.course === c.name ? live : 0);
+    const doneToday = todayBy[c.name] || 0;
+    const plan = Pace.weekPlan({ goal: c.goalMinutes, doneWeek, doneToday, daysLeft });
+    const hist = enough ? Pace.pastWeeks(past.map(w => w.byCourse[c.name] || 0), c.goalMinutes) : null;
+    const coursePerDay = hist ? hist.average / 7 : null;
+    const fc = Pace.forecastWeek({ perDay: coursePerDay, doneWeek, doneToday, daysLeft });
+    byCourse[c.name] = { doneWeek, doneToday, plan, forecast: fc, goal: c.goalMinutes };
+    goalTotal += c.goalMinutes;
+    todayDone += doneToday;
+    if (hist) { perDay += coursePerDay; forecast += fc; }
+    if (!plan.met) { allMet = false; todayTarget += plan.todayTarget; todayLeft += plan.todayLeft; perDayAfter += plan.perDayAfter; }
+  }
+  return {
+    any: goalCourses.length > 0, allMet, daysLeft, goalTotal, byCourse,
+    todayTarget, todayLeft, perDayAfter, todayDone,
+    perDay: enough ? perDay : null,
+    forecast: enough ? forecast : null,
+    pastCount: past.length,
+    past: enough ? Pace.pastWeeks(past.map(w => goalCourses.reduce((a, c) => a + (w.byCourse[c.name] || 0), 0)), goalTotal) : null,
+  };
+}
+
+function paceSummary(p) {
+  if (!p.any) return '';
+  let h = '<div class="pace">';
+  if (p.allMet) h += '<p class="pace-done">Metas de la semana cumplidas ✓</p>';
+  else {
+    h += `<p><b>Hoy: ${fmtMin(p.todayTarget)}</b> <span class="muted">· llevas ${fmtMin(p.todayDone)}</span>${p.todayLeft >= 1 ? ` · te faltan <b>${fmtMin(p.todayLeft)}</b>` : ' · <span class="ok">hoy cumplido ✓</span>'}</p>`;
+    if (p.daysLeft > 1) h += `<p>Luego: <b>${fmtMin(p.perDayAfter)}</b> por día hasta el domingo <span class="muted">(${p.daysLeft - 1} ${p.daysLeft - 1 === 1 ? 'día' : 'días'})</span></p>`;
+  }
+  if (p.forecast !== null) {
+    const ok = p.forecast >= p.goalTotal;
+    h += `<p class="fc ${ok ? 'ok' : 'warn'}">A tu ritmo (${fmtMin(p.perDay)} por día) llegarías a ~${fmtMin(p.forecast)} de ${fmtMin(p.goalTotal)}${ok ? ' ✓' : ''}</p>`;
+  } else {
+    h += `<p class="hint">Pronóstico: necesita 2 semanas completas de historial (${p.pastCount === 1 ? 'hay 1' : 'hay ' + p.pastCount}).</p>`;
+  }
+  if (p.past) h += `<p class="hint">Últimas ${p.past.count} ${p.past.count === 1 ? 'semana' : 'semanas'}: promedio ${fmtMin(p.past.average)} · en tus cursos con meta habrías cumplido la meta actual en ${p.past.met} de ${p.past.count}.</p>`;
+  return h + '</div>';
+}
+
+function coursePaceLine(cp) {
+  if (!cp || !cp.plan || cp.plan.met) return '';
+  const parts = [cp.plan.todayLeft >= 1 ? `hoy faltan ${fmtMin(cp.plan.todayLeft)}` : 'hoy cumplido ✓'];
+  if (cp.plan.daysAfter > 0) parts.push(`luego ${fmtMin(cp.plan.perDayAfter)}/día`);
+  let warn = false;
+  if (cp.forecast !== null) { warn = cp.forecast < cp.goal; parts.push(`a tu ritmo ~${fmtMin(cp.forecast)}`); }
+  return `<span class="g-pace${warn ? ' warn' : ''}">${parts.join(' · ')}</span>`;
 }
 
 function renderStudyMore(d) {
