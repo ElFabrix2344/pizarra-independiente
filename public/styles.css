@@ -273,11 +273,11 @@ section.study{display:flex;flex-direction:column;gap:12px;min-width:0}
 .goal.nogoal .g-val{color:var(--muted)}
 .pace{display:flex;flex-direction:column;gap:3px;padding:2px 0 8px;border-bottom:1px solid var(--hair);font-size:.92rem}
 .pace p{margin:0}
-.pace .ok,.pace .fc.ok,.pace-done{color:var(--ok);font-weight:600}
-.pace .fc.warn{color:var(--warn);font-weight:600}
+.pace .ok,.pace-done{color:var(--ok);font-weight:600}
+.pace .fc{color:var(--muted)}
+.pace .fc b{color:var(--ink)}
 .pace .hint{font-size:.82rem;color:var(--muted)}
 .g-pace{font-size:.8rem;color:var(--muted)}
-.g-pace.warn{color:var(--warn)}
 .goals .hint{font-size:.85rem;color:var(--muted);margin:0}
 .study-more{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:0 18px}
 .study-more > summary{cursor:pointer;padding:12px 0;font-weight:600;color:var(--muted);list-style-position:inside}

@@ -500,7 +500,9 @@ function studyPace(d) {
   // Todo se mide con los cursos que tienen meta. El ritmo real sale de las semanas completas
   // anteriores del historial (mínimo 2), curso por curso.
   const h = H.data;
-  const past = h ? h.weeks.filter(w => w.start < h.currentWeek) : [];
+  // Solo cuentan las semanas desde la primera con datos: antes de empezar a registrar no hay "0 h", hay vacío.
+  const firstData = h ? h.weeks.findIndex(w => w.total > 0) : -1;
+  const past = firstData >= 0 ? h.weeks.slice(firstData).filter(w => w.start < h.currentWeek) : [];
   const enough = past.length >= 2;
   const goalCourses = d.courses.filter(c => c.goalMinutes);
 
@@ -539,9 +541,9 @@ function paceSummary(p) {
   }
   if (p.forecast !== null) {
     const ok = p.forecast >= p.goalTotal;
-    h += `<p class="fc ${ok ? 'ok' : 'warn'}">A tu ritmo (${fmtMin(p.perDay)} por día) llegarías a ~${fmtMin(p.forecast)} de ${fmtMin(p.goalTotal)}${ok ? ' ✓' : ''}</p>`;
+    h += `<p class="fc">A tu ritmo (${fmtMin(p.perDay)} por día) llegarías a <b>~${fmtMin(p.forecast)}</b> de ${fmtMin(p.goalTotal)}${ok ? ' <span class="ok">✓</span>' : ` · faltarían ${fmtMin(p.goalTotal - p.forecast)}`}</p>`;
   } else {
-    h += `<p class="hint">Pronóstico: necesita 2 semanas completas de historial (${p.pastCount === 1 ? 'hay 1' : 'hay ' + p.pastCount}).</p>`;
+    h += `<p class="hint">Pronóstico: aparece cuando tengas 2 semanas completas registradas (${p.pastCount === 1 ? 'llevas 1' : 'llevas ' + p.pastCount}).</p>`;
   }
   if (p.past) h += `<p class="hint">Últimas ${p.past.count} ${p.past.count === 1 ? 'semana' : 'semanas'}: promedio ${fmtMin(p.past.average)} · en tus cursos con meta habrías cumplido la meta actual en ${p.past.met} de ${p.past.count}.</p>`;
   return h + '</div>';
@@ -551,9 +553,8 @@ function coursePaceLine(cp) {
   if (!cp || !cp.plan || cp.plan.met) return '';
   const parts = [cp.plan.todayLeft >= 1 ? `hoy faltan ${fmtMin(cp.plan.todayLeft)}` : 'hoy cumplido ✓'];
   if (cp.plan.daysAfter > 0) parts.push(`luego ${fmtMin(cp.plan.perDayAfter)}/día`);
-  let warn = false;
-  if (cp.forecast !== null) { warn = cp.forecast < cp.goal; parts.push(`a tu ritmo ~${fmtMin(cp.forecast)}`); }
-  return `<span class="g-pace${warn ? ' warn' : ''}">${parts.join(' · ')}</span>`;
+  if (cp.forecast !== null) parts.push(cp.forecast >= cp.goal ? `a tu ritmo ~${fmtMin(cp.forecast)} ✓` : `a tu ritmo ~${fmtMin(cp.forecast)} (faltarían ${fmtMin(cp.goal - cp.forecast)})`);
+  return `<span class="g-pace">${parts.join(' · ')}</span>`;
 }
 
 function renderStudyMore(d) {
