@@ -240,6 +240,15 @@ function renderCal() {
 }
 
 /* ---------- tareas ---------- */
+/* Enlace a TickTick: en escritorio abre la tarea en la app (ticktick://v1/show?taskId=…, probado en Windows);
+   Shift/Ctrl + clic abre la web. En el celular, la web. */
+const DESKTOP_TT = /Windows|Macintosh/.test(navigator.userAgent) && !/Mobi|Android|iPhone|iPad/.test(navigator.userAgent);
+function ttLink(x) {
+  if (!DESKTOP_TT) return `<a class="ext" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir en TickTick" title="Abrir en TickTick">↗</a>`;
+  const app = 'ticktick://v1/show?taskId=' + encodeURIComponent(x.id);
+  return `<a class="ext" href="${esc(app)}" data-web="${esc(x.url)}" aria-label="Abrir en la app de TickTick" title="Abrir en la app de TickTick (Shift + clic: versión web)">↗</a>`;
+}
+
 function taskRow(x, g) {
   const now = Date.now();
   const pr = { 5: 'alta', 3: 'media', 1: 'baja' }[x.priority];
@@ -256,7 +265,7 @@ function taskRow(x, g) {
       ${busy ? '<span class="msg">Marcando…</span>' : ''}
       ${note ? `<span class="msg ${note.ok ? 'good' : 'bad'}">${esc(note.t)}</span>` : ''}
     </div>
-    <a class="ext" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir en TickTick" title="Abrir en TickTick">↗</a>
+    ${ttLink(x)}
   </li>`;
 }
 
@@ -1127,6 +1136,13 @@ document.addEventListener('pointermove', ev => {
   const c = ev.target.closest && ev.target.closest('#heat-wrap .hc');
   if (c) showHeatTip(c);
   else if (!(ev.target.closest && ev.target.closest('#heat-wrap'))) showHeatTip(null);
+});
+document.addEventListener('click', ev => {
+  const web = ev.target.closest('a[data-web]');
+  if (web && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) {
+    ev.preventDefault();
+    window.open(web.dataset.web, '_blank', 'noopener');
+  }
 });
 document.addEventListener('click', ev => {
   const c = ev.target.closest('#heat-wrap .hc');
