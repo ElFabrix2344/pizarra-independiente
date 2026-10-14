@@ -240,13 +240,16 @@ function renderCal() {
 }
 
 /* ---------- tareas ---------- */
-/* Enlace a TickTick: en escritorio abre la tarea en la app (ticktick://v1/show?taskId=…, probado en Windows);
+/* Enlace a TickTick: en escritorio abre la app buscando el título (ticktick://v1/search?keyword=…, probado en Windows;
+   show?taskId solo abre la app, sin la tarea);
    Shift/Ctrl + clic abre la web. En el celular, la web. */
 const DESKTOP_TT = /Windows|Macintosh/.test(navigator.userAgent) && !/Mobi|Android|iPhone|iPad/.test(navigator.userAgent);
 function ttLink(x) {
   if (!DESKTOP_TT) return `<a class="ext" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir en TickTick" title="Abrir en TickTick">↗</a>`;
-  const app = 'ticktick://v1/show?taskId=' + encodeURIComponent(x.id);
-  return `<a class="ext" href="${esc(app)}" data-web="${esc(x.url)}" aria-label="Abrir en la app de TickTick" title="Abrir en la app de TickTick (Shift + clic: versión web)">↗</a>`;
+  // Título completo (hasta 80 caracteres, cortado en una palabra) para distinguir tareas parecidas.
+  const q = x.title.length > 80 ? x.title.slice(0, 80).replace(/\s+\S*$/, '') : x.title;
+  const app = 'ticktick://v1/search?keyword=' + encodeURIComponent(q);
+  return `<a class="ext" href="${esc(app)}" data-web="${esc(x.url)}" aria-label="Buscar en la app de TickTick" title="Buscar en la app de TickTick (Shift + clic: versión web)">↗</a>`;
 }
 
 function taskRow(x, g) {
