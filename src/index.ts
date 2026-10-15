@@ -23,6 +23,7 @@ import {
   startStudy,
   stopStudy,
   StudyStore,
+  validCycleStart,
 } from './services/study';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -129,6 +130,8 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
       book.courses[name] = validateCourse(body);
     }
     await ctx.store.put(book);
+    // Sin inicio de ciclo guardado, la fecha por defecto avanza cada lunes (y con ella el libro): se fija al guardar notas.
+    if (!ctx.pinned) await saveCycleStart(ctx.study, ctx.cycleStart, { now: new Date(), timeZone: tz });
     return json(buildResult(book, ctx.courses));
   }
 
@@ -166,7 +169,10 @@ async function gradesContext(env: Env, url: URL, tz: string) {
   const [cat, settings] = await ttCall(() => Promise.all([loadCourses(client, now.getTime()), study.getSettings()]));
   return {
     store: new GradeStore(env.TOKENS),
+    study,
     cycleStart: settings.cycleStart ?? defaultCycleStart(weekRange(now, tz).monday),
+    /** ¿La fecha de inicio está guardada? Si no, es la de por defecto, que se mueve cada semana. */
+    pinned: !!settings.cycleStart,
     courses: visibleCourses(cat, settings),
   };
 }
@@ -189,7 +195,14 @@ async function studyAction(req: Request, env: Env, url: URL, tz: string): Promis
     return json({ ok: true });
   }
   if (p === '/api/study/manual' && req.method === 'POST') return json(await ttCall(() => addManual(client, store, body, { now: new Date(), timeZone: tz })));
-  if (p === '/api/study/cycle' && req.method === 'PUT') return json(await saveCycleStart(store, body.start, { now: new Date(), timeZone: tz }));
+  if (p === '/api/study/cycle' && req.method === 'PUT') {
+    // Las notas se guardan por inicio de ciclo: primero se mueve el libro (si es un ajuste) y luego se guarda la fecha.
+    const opts = { now: new Date(), timeZone: tz };
+    const start = validCycleStart(body.start, opts);
+    const prev = (await store.getSettings()).cycleStart ?? defaultCycleStart(weekRange(opts.now, tz).monday);
+    const grades = await new GradeStore(env.TOKENS).followCycle(prev, start);
+    return json({ ...(await saveCycleStart(store, start, opts)), grades });
+  }
   if (p === '/api/study/courses' && req.method === 'PUT') return json(await ttCall(() => saveCourses(client, store, body)));
   if (p === '/api/study/goals' && req.method === 'PUT') return json(await ttCall(() => saveGoals(client, store, body.goals)));
 

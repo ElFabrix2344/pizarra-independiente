@@ -68,17 +68,38 @@ const S = {
   session: false,
 };
 let loadedDay = null, lastRefresh = 0, armed = null, armTimer = null, flash = null;
-const done = new Set(), pending = new Map(), notes = new Map();
+// done: id → fecha (ms) de la ocurrencia marcada como hecha. Una tarea que se repite conserva su id
+// y TickTick la pasa a la siguiente fecha: esa ocurrencia nueva sí se muestra.
+const done = new Map(), pending = new Map(), notes = new Map();
+const isDone = x => done.has(x.id) && done.get(x.id) === (x.due ? +x.due : null);
 
 let evIgnored = 0, evArmed = null, evArmTimer = null;
 const evHidden = new Set();
+// Calendarios que fallaron en la última lectura (p. ej. el de clases) y cuándo se leyó bien cada uno por última vez.
+let calFailed = [];
+const calGoodAt = new Map();
 const SOURCES = {
-  cal: { path: '/api/calendar', pick: b => b.events.map(toEvent) },
+  cal: { path: '/api/calendar', pick: pickCalendar },
   tt: { path: '/api/tasks', pick: b => b.tasks.map(toTask) },
   ev: { path: '/api/evaluations', pick: b => { evIgnored = b.ignoredCount || 0; return b.evaluations.map(toTask); } },
   st: { path: '/api/study', pick: b => b },
   gr: { path: '/api/grades', pick: b => b },
 };
+
+/** Eventos leídos + los últimos buenos de un calendario que esta vez falló (el servidor devuelve el resto
+ *  y marca el que falló con ok: false). Así las clases no desaparecen por un error pasajero de Google. */
+function pickCalendar(b) {
+  const items = b.events.map(toEvent), now = Date.now();
+  const cals = Array.isArray(b.calendars) ? b.calendars : [];
+  const name = c => String(c.name || c.id || '');
+  for (const c of cals) if (c && c.ok !== false) calGoodAt.set(name(c), now);
+  const failed = cals.filter(c => c && c.ok === false).map(name);
+  calFailed = failed.map(n => ({ name: n || 'un calendario', since: calGoodAt.get(n) || null }));
+  if (!failed.length) return items;
+  const t = today(), seen = new Set(items.map(e => e.id + '|' + +e.start));
+  const kept = S.cal.items.filter(e => failed.includes(e.calendar) && e.key >= t && !seen.has(e.id + '|' + +e.start));
+  return items.concat(kept).sort((a, b) => a.key !== b.key ? (a.key < b.key ? -1 : 1) : a.start - b.start);
+}
 
 async function load(name) {
   const s = S[name], src = SOURCES[name];
@@ -107,13 +128,15 @@ async function refreshAll() {
 
 /* ---------- completar tareas ---------- */
 async function completeTask(id, project) {
+  // La fecha se toma antes de llamar: un refresco en paralelo podría traer ya la siguiente ocurrencia.
+  const it = S.tt.items.find(x => x.id === id), due0 = it && it.due ? +it.due : null;
   pending.set(id, true); notes.delete(id); render();
   try {
     await api(`/api/tasks/${encodeURIComponent(project)}/${encodeURIComponent(id)}/complete`, {
       method: 'POST',
       headers: { 'X-Pizarra': '1' },
     });
-    done.add(id); notes.set(id, { ok: true, t: 'Marcada como hecha' });
+    done.set(id, due0); notes.set(id, { ok: true, t: 'Marcada como hecha' });
     Promise.all([load('tt'), load('ev')]).then(render);
   } catch (e) {
     const c = e && e.code;
@@ -168,7 +191,7 @@ function taskLabel(x) {
   return [x.list, x.column].filter(Boolean).join(' · ');
 }
 
-function tasksVisible() { return S.tt.items.filter(x => !done.has(x.id)); }
+function tasksVisible() { return S.tt.items.filter(x => !isDone(x)); }
 
 // Estado solo de la vista: eventos abiertos/cerrados a mano y si se ven los terminados de hoy.
 const evOpen = new Map();
@@ -206,13 +229,21 @@ function evRow(e, mainId, now) {
     </button>${more}</li>`;
 }
 
+/** Aviso cuando un calendario no se pudo leer y el resto sí. */
+function calFailedBox() {
+  const t = calFailed.map(c => c.since
+    ? `No se pudo actualizar «${c.name}»: se muestran sus eventos leídos a las ${fTime.format(new Date(c.since))}.`
+    : `No se pudo leer «${c.name}»: faltan sus eventos.`).join(' ');
+  return `<div class="error"><span><b>${esc(t)}</b> Se reintentará en el próximo ciclo de actualización.</span></div>`;
+}
+
 function renderCal() {
   const s = S.cal, body = $('cal-body');
   if (s.status === 'loading' && !s.at) { body.innerHTML = skeleton(); return; }
   if (s.status === 'error') { body.innerHTML = errorBox(CAL, s.err); return; }
   const now = Date.now(), t = today(), mainId = featured().main?.id, groups = new Map();
   for (const e of s.items) { if (!groups.has(e.key)) groups.set(e.key, []); groups.get(e.key).push(e); }
-  let h = s.status === 'stale' ? errorBox(CAL, s.err) : '';
+  let h = s.status === 'stale' ? errorBox(CAL, s.err) : calFailed.length ? calFailedBox() : '';
   if (!groups.size) { body.innerHTML = h + '<div class="empty">No hay eventos en los próximos 7 días.</div>'; return; }
   for (const [k, evs] of groups) {
     const allDay = evs.filter(e => e.allDay), timed = evs.filter(e => !e.allDay);
@@ -266,7 +297,7 @@ function taskRow(x, g) {
       ${x.note ? `<span class="d">${esc(x.note)}</span>` : ''}
       ${isArmed ? '<span class="confirm">¿Hecha? Toca el círculo otra vez para confirmar</span>' : ''}
       ${busy ? '<span class="msg">Marcando…</span>' : ''}
-      ${note ? `<span class="msg ${note.ok ? 'good' : 'bad'}">${esc(note.t)}</span>` : ''}
+      ${note && !note.ok ? `<span class="msg bad">${esc(note.t)}</span>` : ''}
     </div>
     ${ttLink(x)}
   </li>`;
@@ -328,6 +359,7 @@ function renderHero() {
     }
   }
   if (s.status === 'stale') h += `<span class="muted">Sin actualizar desde ${fTime.format(new Date(s.at))}</span>`;
+  else if (calFailed.length) h += `<span class="muted">Sin datos nuevos de ${esc(listFmt.format(calFailed.map(c => '«' + c.name + '»')))} (ver Agenda).</span>`;
   el.innerHTML = h;
 }
 
@@ -349,7 +381,7 @@ function renderExams() {
   if (ev.status === 'loading' && !ev.at) h += '<span class="muted">Cargando…</span>';
   else if (ev.status === 'error') h += errorBox(TT, ev.err);
   else {
-    const list = ev.items.filter(x => x.key && x.key >= t && !done.has(x.id) && !evHidden.has(x.id));
+    const list = ev.items.filter(x => x.key && x.key >= t && !isDone(x) && !evHidden.has(x.id));
     if (!list.length) h += '<span class="muted">Nada en los próximos 70 días. Las tareas de TickTick que empiezan con PC, Parcial, Examen, Entrega o Actividad calificada aparecen aquí.</span>';
     else {
       h += '<ul class="exams">';
@@ -423,7 +455,11 @@ async function studyAction(path, method, body) {
     else if (path.endsWith('/manual')) { studyMsg = { ok: true, t: `Sesión agregada: ${fmtMin(r.minutes)} de ${r.course}.` }; moreDirty = false; }
     else if (path.endsWith('/goals')) { studyMsg = { ok: true, t: 'Metas guardadas.' }; moreDirty = false; }
     else if (path.endsWith('/courses')) { studyMsg = { ok: true, t: 'Cursos actualizados.' }; moreDirty = false; }
-    else if (path.endsWith('/cycle')) studyMsg = { ok: true, t: 'Inicio del ciclo guardado.' };
+    else if (path.endsWith('/cycle')) {
+      // Las notas van por ciclo: un ajuste de fecha las mueve; otro ciclo empieza en blanco.
+      studyMsg = { ok: true, t: r.grades === 'new' ? 'Inicio del ciclo guardado. Es otro ciclo: Notas empieza en blanco (las notas anteriores siguen guardadas con la fecha anterior).' : 'Inicio del ciclo guardado.' };
+      load('gr').then(render);
+    }
     else if (method === 'DELETE') studyMsg = { ok: true, t: 'Sesión borrada.' };
     return r;
   } catch (e) {
@@ -1002,7 +1038,14 @@ function renderGrades(force = false) {
       <div class="stat"><span class="l">Acumulado proyectado</span><span class="v">${sem.cumulative !== null ? sem.cumulative.toFixed(2) : '—'}</span>${sem.cumulative === null ? '<span class="hint">Pon tu acumulado anterior en «Créditos, metas y acumulado anterior».</span>' : ''}</div></div>${missing}`;
   }
   h += `<div class="g-grid">${d.courses.map(gradeCard).join('')}</div>`;
+  // Lo escrito en el formulario abierto (aún sin guardar) se conserva al redibujar: refresco automático o error al guardar.
+  const open = gEditing ? body.querySelector('.gcard.editing form[data-g-form]') : null;
+  const draft = open && open.dataset.gForm === gEditing ? open.querySelector('.g-rows') : null;
   body.innerHTML = h;
+  if (draft) {
+    const fresh = body.querySelector('.gcard.editing .g-rows');
+    if (fresh) { fresh.replaceWith(draft); updateWeightSum(draft.closest('form')); }
+  }
   applyPositions(body);
 
   const set = $('grades-settings');
@@ -1026,14 +1069,22 @@ function gradeSettings(d) {
       <button type="submit">Guardar acumulado</button></form>`;
 }
 
-async function gradesPut(path, body, okText) {
+/** kind: 'course' (formulario de notas de un curso) o 'settings' (créditos/metas/acumulado). */
+async function gradesPut(path, body, okText, kind = 'course') {
   if (gBusy) return;
   gBusy = true; gMsg = null;
   try {
     const r = await api(path, { method: 'PUT', headers: { 'X-Pizarra': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     S.gr.items = r; S.gr.at = Date.now(); S.gr.status = 'ok'; S.gr.err = null;
-    gMsg = { ok: true, t: okText }; gEditing = null; gSettingsDirty = false;
-    setTimeout(() => { gMsg = null; renderGrades(true); }, 4000);
+    gMsg = { ok: true, t: okText };
+    // Guardar uno de los formularios no cierra ni descarta lo que estés escribiendo en el otro.
+    if (kind === 'course') gEditing = null; else gSettingsDirty = false;
+    setTimeout(() => {
+      gMsg = null;
+      // Si mientras tanto abriste un curso para editar, no se redibuja (perderías el foco): solo se quita el aviso.
+      if (gEditing) $('grades-body')?.querySelector(':scope > .msg')?.remove();
+      else renderGrades(true);
+    }, 4000);
   } catch (e) {
     if (e && e.code === 'session') S.session = true;
     gMsg = { ok: false, t: (e && e.message) || 'No se pudo guardar.' };
@@ -1096,7 +1147,7 @@ document.addEventListener('submit', ev => {
         if (!c) continue;
         const credits = r.querySelector('[name=credits]').value, target = r.querySelector('[name=target]').value, academic = r.querySelector('[name=academic]').checked;
         if (String(c.credits ?? '') === credits && String(c.target ?? '') === target && c.academic === academic) continue;
-        await gradesPut('/api/grades/course', { name: c.name, credits, target, academic, items: c.items }, 'Cursos guardados.');
+        await gradesPut('/api/grades/course', { name: c.name, credits, target, academic, items: c.items }, 'Cursos guardados.', 'settings');
       }
     })();
     return;
@@ -1104,7 +1155,7 @@ document.addEventListener('submit', ev => {
   const gp = ev.target.closest('[data-g-prior]');
   if (gp) {
     ev.preventDefault();
-    gradesPut('/api/grades/prior', { average: gp.average.value, credits: gp.credits.value }, 'Acumulado guardado.');
+    gradesPut('/api/grades/prior', { average: gp.average.value, credits: gp.credits.value }, 'Acumulado guardado.', 'settings');
   }
 });
 document.addEventListener('input', ev => {

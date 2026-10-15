@@ -5,7 +5,8 @@
 //    la fracción desde 0.5 sube a la unidad inmediata superior.
 //  - Calificación por semestre (CS) y acumulada (CAc): Σ(CA × créditos) / Σ créditos,
 //    con dos decimales sin redondear (se trunca). Las asignaturas REC/NREC no cuentan.
-// Los datos viven en KV, un libro por ciclo: "grades:<inicio del ciclo>".
+// Los datos viven en KV, un libro por ciclo: "grades:<inicio del ciclo>". Ajustar la fecha de inicio
+// unas semanas mueve el libro a la nueva fecha; una fecha de otro ciclo empieza un libro nuevo.
 
 import { ApiError } from '../lib/http';
 
@@ -170,7 +171,29 @@ export class GradeStore {
   put(book: GradeBook) {
     return this.kv.put(this.key(book.cycleStart), JSON.stringify(book));
   }
+
+  /**
+   * Al cambiar el inicio del ciclo de `from` a `to`:
+   *  - "moved": era un ajuste (≤ SAME_CYCLE_DAYS) y el libro pasó a la nueva fecha (se mueve, no se copia,
+   *    para que volver a la fecha anterior no muestre una copia vieja).
+   *  - "new": es otro ciclo; Notas empieza vacío y el libro anterior queda guardado con su fecha.
+   *  - "none": nada que hacer (misma fecha, sin libro anterior, o la nueva fecha ya tiene el suyo).
+   */
+  async followCycle(from: string, to: string): Promise<'moved' | 'new' | 'none'> {
+    if (from === to) return 'none';
+    const [oldRaw, newRaw] = await Promise.all([this.kv.get(this.key(from)), this.kv.get(this.key(to))]);
+    if (!oldRaw || newRaw) return 'none';
+    const days = Math.abs(Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 864e5;
+    if (!(days <= SAME_CYCLE_DAYS)) return 'new';
+    const book = JSON.parse(oldRaw) as GradeBook;
+    await this.kv.put(this.key(to), JSON.stringify({ ...book, cycleStart: to }));
+    await this.kv.delete(this.key(from));
+    return 'moved';
+  }
 }
+
+/** Dos fechas de inicio a esta distancia o menos son el mismo ciclo (UP: entre el verano y el ciclo I hay ~11 semanas). */
+export const SAME_CYCLE_DAYS = 60;
 
 /** Cursos que no entran al ponderado por defecto: EFE (Experiencias Formativas Estudiantiles, REC/NREC). */
 export function defaultAcademic(name: string) {

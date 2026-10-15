@@ -483,13 +483,19 @@ export async function getHistory(
   };
 }
 
-export async function saveCycleStart(store: StudyStore, start: unknown, opts: { now: Date; timeZone: string }) {
+/** Valida la fecha de inicio del ciclo ("YYYY-MM-DD", no futura, de hace menos de un año). */
+export function validCycleStart(start: unknown, opts: { now: Date; timeZone: string }): string {
   const today = dayKeyInZone(opts.now, opts.timeZone);
   if (typeof start !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(start) || Number.isNaN(Date.parse(start + 'T12:00:00Z'))) {
     throw new ApiError('bad_request', 400, 'Fecha de inicio inválida.');
   }
   if (start > today) throw new ApiError('bad_request', 400, 'El ciclo no puede empezar en el futuro.');
   if (start < addDays(today, -366)) throw new ApiError('bad_request', 400, 'La fecha es de hace más de un año.');
+  return start;
+}
+
+export async function saveCycleStart(store: StudyStore, raw: unknown, opts: { now: Date; timeZone: string }) {
+  const start = validCycleStart(raw, opts);
   const settings = await store.getSettings();
   await store.setSettings({ ...settings, cycleStart: start });
   return { cycleStart: start };

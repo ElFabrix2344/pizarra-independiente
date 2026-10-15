@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildResult,
   emptyCourse,
+  GradeStore,
   need,
   roundHalfUp,
   summarizeCourse,
@@ -10,6 +11,7 @@ import {
   validateCourse,
   validatePrior,
   type CourseGrades,
+  type GradeBook,
 } from '../src/services/grades';
 
 const course = (items: Array<[string, number, number | null]>, extra: Partial<CourseGrades> = {}): CourseGrades => ({
@@ -112,5 +114,52 @@ describe('validación y armado', () => {
     expect(r.courses.map((c) => c.name)).toEqual(['HEE', 'EFE Presentaciones', 'Viejo']);
     expect(r.courses.find((c) => c.name === 'EFE Presentaciones')!.academic).toBe(false);
     expect(r.passing).toBe(11);
+  });
+});
+
+describe('libro de notas al cambiar el inicio del ciclo', () => {
+  const kv = () => {
+    const m = new Map<string, string>();
+    const k = {
+      get: async (key: string, type?: string) => (m.has(key) ? (type === 'json' ? JSON.parse(m.get(key)!) : m.get(key)!) : null),
+      put: async (key: string, v: string) => void m.set(key, v),
+      delete: async (key: string) => void m.delete(key),
+    } as unknown as KVNamespace;
+    return { m, k };
+  };
+  const book = (cycleStart: string): GradeBook => ({ cycleStart, courses: { HEE: course([['PC1', 50, 15]]) }, prior: { average: 14.2, credits: 90 } });
+
+  it('un ajuste de pocas semanas mueve las notas a la nueva fecha (y volver atrás también)', async () => {
+    const { m, k } = kv();
+    const store = new GradeStore(k);
+    await store.put(book('2026-08-10'));
+    expect(await store.followCycle('2026-08-10', '2026-08-17')).toBe('moved');
+    expect(m.has('grades:2026-08-10')).toBe(false);
+    const moved = await store.get('2026-08-17');
+    expect(moved.courses.HEE!.items[0]!.grade).toBe(15);
+    expect(moved.prior).toEqual({ average: 14.2, credits: 90 });
+    // Lo editado tras el ajuste vuelve con la fecha anterior (no queda una copia vieja esperando).
+    await store.put({ ...moved, prior: { average: 15, credits: 90 } });
+    expect(await store.followCycle('2026-08-17', '2026-08-10')).toBe('moved');
+    expect((await store.get('2026-08-10')).prior.average).toBe(15);
+  });
+  it('otro ciclo empieza vacío y el anterior queda guardado', async () => {
+    const { m, k } = kv();
+    const store = new GradeStore(k);
+    await store.put(book('2026-08-10'));
+    expect(await store.followCycle('2026-08-10', '2027-03-22')).toBe('new');
+    expect(m.has('grades:2026-08-10')).toBe(true);
+    expect((await store.get('2027-03-22')).courses).toEqual({});
+  });
+  it('no toca nada si la fecha no cambia, si no hay notas o si la nueva fecha ya tiene las suyas', async () => {
+    const { m, k } = kv();
+    const store = new GradeStore(k);
+    expect(await store.followCycle('2026-08-10', '2026-08-17')).toBe('none');
+    await store.put(book('2026-08-10'));
+    expect(await store.followCycle('2026-08-10', '2026-08-10')).toBe('none');
+    await store.put({ ...book('2026-08-17'), prior: { average: 16, credits: 90 } });
+    expect(await store.followCycle('2026-08-10', '2026-08-17')).toBe('none');
+    expect(m.has('grades:2026-08-10')).toBe(true);
+    expect((await store.get('2026-08-17')).prior.average).toBe(16);
   });
 });

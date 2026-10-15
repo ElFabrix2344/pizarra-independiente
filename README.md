@@ -244,7 +244,7 @@ npm run typecheck
 
 ## Notas
 
-Registro de notas del ciclo, un libro por ciclo en KV (`grades:<inicio del ciclo>`). Los cursos son los mismos de Estudio.
+Registro de notas del ciclo, un libro por ciclo en KV (`grades:<inicio del ciclo>`). Los cursos son los mismos de Estudio. Si corriges el «Inicio del ciclo» (en Historial) por pocas semanas (≤ 60 días), las notas se mueven a la nueva fecha; una fecha más lejana es otro ciclo: Notas empieza en blanco y el libro anterior queda guardado con su fecha (volver a esa fecha lo muestra). Sin inicio de ciclo guardado, se fija el de por defecto al guardar la primera nota.
 
 - **Por curso**: evaluaciones con su peso (%) y su nota (0–20) cuando sale; créditos, si cuenta para el ponderado y una meta opcional.
 - **Cálculos** según el Reglamento de Estudios de Pregrado UP 2023 (art. 28–30 y anexo): se aprueba con 11; la nota del curso redondea desde .5; el ponderado del semestre y el acumulado son Σ(nota × créditos) / Σ créditos con dos decimales **truncados**. Los cursos que no cuentan (REC/NREC, p. ej. EFE) se marcan como «no cuenta en el ponderado».
