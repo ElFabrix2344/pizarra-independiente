@@ -270,4 +270,20 @@ describe('constancia (rachas)', () => {
     expect(h.today).toBe(weekRange(new Date(), TZ).today);
     expect(h.streak.totalDays).toBeGreaterThan(0);
   });
+  it('minutos por día y curso: suman lo mismo que el día y que la semana del curso', async () => {
+    const { getHistory, mondayOf } = await import('../src/services/study');
+    const h = await getHistory(client(), new StudyStore(memKV()), { now: new Date(), timeZone: TZ });
+    expect(Object.keys(h.dayCourses).sort()).toEqual(Object.keys(h.days).sort());
+    for (const [day, byCourse] of Object.entries(h.dayCourses)) {
+      expect(Object.values(byCourse).reduce((a, b) => a + b, 0)).toBe(h.days[day]);
+    }
+    for (const wk of h.weeks) {
+      for (const c of h.courses) {
+        const sum = Object.entries(h.dayCourses)
+          .filter(([day]) => mondayOf(day) === wk.start)
+          .reduce((a, [, bc]) => a + (bc[c] ?? 0), 0);
+        expect(sum).toBe(wk.byCourse[c] ?? 0);
+      }
+    }
+  });
 });

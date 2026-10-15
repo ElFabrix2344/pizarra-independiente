@@ -385,6 +385,8 @@ export interface HistoryResult {
   /** Hoy (dayKey) y minutos estudiados por día desde el primer lunes mostrado. */
   today: string;
   days: Record<string, number>;
+  /** Minutos por día y curso (clave '' = otros / sin curso visible). */
+  dayCourses: Record<string, Record<string, number>>;
   streak: Streak;
 }
 
@@ -440,11 +442,15 @@ export async function getHistory(
   const weeks: HistoryWeek[] = mondays.map((m) => ({ start: m, end: addDays(m, 6), byCourse: {}, other: 0, total: 0 }));
   const index = new Map(mondays.map((m, i) => [m, i]));
   const days: Record<string, number> = {};
+  const dayCourses: Record<string, Record<string, number>> = {};
   const totals: Record<string, number> = Object.fromEntries(visible.map((c) => [c, 0]));
   let otherTotal = 0;
   for (const s of sessions) {
     const day = dayKeyInZone(new Date(s.start), tz);
     days[day] = (days[day] ?? 0) + s.minutes;
+    const ck = s.course && visible.includes(s.course) ? s.course : '';
+    const dc = (dayCourses[day] ??= {});
+    dc[ck] = (dc[ck] ?? 0) + s.minutes;
     const i = index.get(mondayOf(day));
     const wk = i === undefined ? undefined : weeks[i];
     if (!wk) continue;
@@ -471,6 +477,7 @@ export async function getHistory(
     truncated,
     today: w.today,
     days,
+    dayCourses,
     // La racha cuenta desde el inicio real del ciclo (no desde su lunes), o desde el primer día mostrado si se recortó.
     streak: computeStreak(days, truncated || cycleStart < first ? first : cycleStart > w.today ? w.today : cycleStart, w.today),
   };

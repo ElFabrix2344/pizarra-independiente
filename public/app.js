@@ -392,6 +392,7 @@ function renderDate() {
 
 /* ---------- estudio ---------- */
 const fDayShort = new Intl.DateTimeFormat('es-PE', { timeZone: TZ, weekday: 'short', day: 'numeric' });
+const listFmt = new Intl.ListFormat('es', { style: 'long', type: 'conjunction' });
 let studyMsg = null, studyArmed = null, studyArmTimer = null, studyBusy = false, moreRenderedAt = null, moreDirty = false;
 
 function fmtMin(m) {
@@ -481,7 +482,7 @@ function renderStudy() {
   }
   if (d.otherMinutes) g += `<div class="goal nogoal"><div class="g-top"><span class="g-name">Otros / General</span><span class="g-val mono">${fmtMin(d.otherMinutes)}</span></div></div>`;
   if (!d.courses.some(c => c.goalMinutes)) g += '<p class="hint">Pon una meta semanal por curso en «metas», aquí abajo.</p>';
-  g += '</div>';
+  g += dayTable(d) + '</div>';
   main.innerHTML = t + g;
 
   // Panel desplegable: solo se redibuja con datos nuevos y si no lo estás editando.
@@ -518,7 +519,7 @@ function studyPace(d) {
   const enough = past.length >= 2;
   const goalCourses = d.courses.filter(c => c.goalMinutes);
 
-  const byCourse = {};
+  const byCourse = {}, pendingToday = [];
   let todayTarget = 0, todayLeft = 0, perDayAfter = 0, goalTotal = 0, todayDone = 0, perDay = 0, forecast = 0, allMet = true;
   for (const c of goalCourses) {
     const doneWeek = c.minutes + (d.active && d.active.course === c.name ? live : 0);
@@ -532,10 +533,11 @@ function studyPace(d) {
     todayDone += doneToday;
     if (hist) { perDay += coursePerDay; forecast += fc; }
     if (!plan.met) { allMet = false; todayTarget += plan.todayTarget; todayLeft += plan.todayLeft; perDayAfter += plan.perDayAfter; }
+    if (plan && !plan.met && plan.todayLeft >= 1) pendingToday.push({ name: c.name, left: plan.todayLeft });
   }
   return {
     any: goalCourses.length > 0, allMet, daysLeft, goalTotal, byCourse,
-    todayTarget, todayLeft, perDayAfter, todayDone,
+    todayTarget, todayLeft, perDayAfter, todayDone, pendingToday,
     perDay: enough ? perDay : null,
     forecast: enough ? forecast : null,
     pastCount: past.length,
@@ -548,7 +550,9 @@ function paceSummary(p) {
   let h = '<div class="pace">';
   if (p.allMet) h += '<p class="pace-done">Metas de la semana cumplidas ✓</p>';
   else {
-    h += `<p><b>Hoy: ${fmtMin(p.todayTarget)}</b> <span class="muted">· llevas ${fmtMin(p.todayDone)}</span>${p.todayLeft >= 1 ? ` · te faltan <b>${fmtMin(p.todayLeft)}</b>` : ' · <span class="ok">hoy cumplido ✓</span>'}</p>`;
+    // Cada curso tiene su meta: lo extra en uno no cubre a otro, así que se dice qué curso falta.
+    const pend = p.pendingToday.map(x => `<b>${fmtMin(x.left)}</b> de ${esc(x.name)}`);
+    h += `<p><b>Hoy: ${fmtMin(p.todayTarget)}</b> <span class="muted">· llevas ${fmtMin(p.todayDone)}</span>${pend.length ? ` · te faltan ${listFmt.format(pend)}` : ' · <span class="ok">hoy cumplido ✓</span>'}</p>`;
     if (p.daysLeft > 1) h += `<p>Luego: <b>${fmtMin(p.perDayAfter)}</b> por día hasta el domingo <span class="muted">(${p.daysLeft - 1} ${p.daysLeft - 1 === 1 ? 'día' : 'días'})</span></p>`;
   }
   if (p.forecast !== null) {
@@ -567,6 +571,57 @@ function coursePaceLine(cp) {
   if (cp.plan.daysAfter > 0) parts.push(`luego ${fmtMin(cp.plan.perDayAfter)}/día`);
   if (cp.forecast !== null) parts.push(cp.forecast >= cp.goal ? `a tu ritmo ~${fmtMin(cp.forecast)} ✓` : `a tu ritmo ~${fmtMin(cp.forecast)} (faltarían ${fmtMin(cp.goal - cp.forecast)})`);
   return `<span class="g-pace">${parts.join(' · ')}</span>`;
+}
+
+/* ---------- por día: curso × día de una semana ---------- */
+const fDowHead = new Intl.DateTimeFormat('es-PE', { timeZone: 'UTC', weekday: 'short' });
+let dayWeek = null; // lunes de la semana mostrada; null = la actual
+
+/** "45m", "1h10", "2h": cabe en una columna angosta del celular. */
+function fmtShort(m) {
+  m = Math.round(m);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60), r = m % 60;
+  return h + 'h' + (r ? String(r).padStart(2, '0') : '');
+}
+
+/** Minutos por día y curso ('' = otros). La semana actual sale de las sesiones (más el cronómetro en marcha), igual que las metas; las anteriores, del historial. */
+function weekDays(d, monday) {
+  const out = {};
+  if (monday === d.weekStart) {
+    const visible = new Set(d.courses.map(c => c.name));
+    const add = (k, c, m) => { const o = (out[k] ||= {}); const ck = c && visible.has(c) ? c : ''; o[ck] = (o[ck] || 0) + m; };
+    for (const x of d.sessions) add(dayKey(new Date(x.start)), x.course, x.minutes);
+    if (d.active) add(d.today, d.active.course, activeElapsed(d.active) / 60000);
+    return out;
+  }
+  const dc = (H.data && H.data.dayCourses) || {};
+  for (let i = 0; i < 7; i++) { const k = addDays(monday, i); if (dc[k]) out[k] = dc[k]; }
+  return out;
+}
+
+function dayTable(d) {
+  const cur = d.weekStart, h = H.data;
+  const first = h && h.weeks.length ? h.weeks[0].start : cur;
+  const monday = dayWeek && dayWeek >= first && dayWeek < cur ? dayWeek : cur;
+  const data = weekDays(d, monday);
+  const keys = [0, 1, 2, 3, 4, 5, 6].map(i => addDays(monday, i));
+  const val = (k, c) => Math.round((data[k] && data[k][c]) || 0);
+  const rows = d.courses.map(c => c.name);
+  if (keys.some(k => val(k, ''))) rows.push('');
+  const td = (k, m, cls = '') => k > d.today ? '<td class="fut"></td>'
+    : `<td class="mono${k === d.today ? ' today' : ''}${cls}">${m ? fmtShort(m) : '<span class="zero">·</span>'}</td>`;
+
+  const label = monday === cur ? 'Esta semana' : weekRangeLabel({ start: monday, end: keys[6] });
+  const prevOff = !h || monday <= first, nextOff = monday >= cur;
+  let out = `<div class="perday"><div class="perday-head"><span class="eyebrow">Por día</span>
+    <span class="perday-nav"><button type="button" class="ghost" data-days-nav="-1" aria-label="Semana anterior"${prevOff ? ' disabled' : ''}>‹</button><span class="perday-week">${esc(label)}</span><button type="button" class="ghost" data-days-nav="1" aria-label="Semana siguiente"${nextOff ? ' disabled' : ''}>›</button></span></div>
+    <div class="tbl-scroll"><table class="perday-tbl"><thead><tr><th scope="col"><span class="sr">Curso</span></th>${keys.map(k => `<th scope="col"${k === d.today ? ' class="today"' : ''}><span>${esc(fDowHead.format(keyUTC(k)).replace('.', ''))}</span><span>${Number(k.slice(8))}</span></th>`).join('')}</tr></thead><tbody>`;
+  for (const c of rows) {
+    out += `<tr><th scope="row">${esc(c || 'Otros')}</th>${keys.map(k => td(k, val(k, c))).join('')}</tr>`;
+  }
+  out += `<tr class="tot"><th scope="row">Total</th>${keys.map(k => td(k, rows.reduce((a, c) => a + val(k, c), 0))).join('')}</tr>`;
+  return out + '</tbody></table></div></div>';
 }
 
 function renderStudyMore(d) {
@@ -602,6 +657,15 @@ function armStudy(key) {
 
 /** Clicks de la sección de estudio. Devuelve true si los manejó. */
 function studyClick(ev) {
+  const nav = ev.target.closest('[data-days-nav]');
+  if (nav) {
+    const cur = S.st.items && S.st.items.weekStart;
+    if (!cur) return true;
+    const next = addDays(dayWeek || cur, 7 * Number(nav.dataset.daysNav));
+    dayWeek = next >= cur ? null : next;
+    renderStudy();
+    return true;
+  }
   const st = ev.target.closest('[data-study-start]');
   if (st) { studyAction('/api/study/start', 'POST', { course: st.dataset.studyStart }); return true; }
   if (ev.target.closest('[data-study-pause]')) { studyAction('/api/study/pause', 'POST', {}); return true; }
@@ -678,6 +742,8 @@ async function loadHistory() {
   }
   renderHistory();
   renderStreak();
+  // El ritmo y la tabla por día también usan el historial.
+  if (S.st.items) renderStudy();
 }
 
 function slotOf(h, course) {
