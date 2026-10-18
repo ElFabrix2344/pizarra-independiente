@@ -5,6 +5,7 @@ import { GoogleError } from './lib/google';
 import { handleOAuth } from './oauth';
 import { connectionStatus, getGoogleAccessToken, getTickTickClient } from './providers';
 import { getPanelCalendar } from './services/calendar';
+import { noteStatus, recordNoteError, saveContext, syncNote } from './services/claudeNote';
 import { buildResult, GradeStore, validateCourse, validatePrior } from './services/grades';
 import { getEvaluations, getIgnoredEvals, getPanelTasks, ignoreEval, restoreEvals, ttCall, type Strategy } from './services/tasks';
 import {
@@ -42,7 +43,7 @@ const CSP = [
 ].join('; ');
 
 export default {
-  async fetch(req: Request, rawEnv: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(req: Request, rawEnv: Env, ctx: ExecutionContext): Promise<Response> {
     const env = trimSecrets(rawEnv);
     const url = new URL(req.url);
     const local = isLocalDev(url, env);
@@ -56,15 +57,23 @@ export default {
 
     let res: Response;
     try {
-      res = (await route(req, env, url)) ?? (await env.ASSETS.fetch(req));
+      res = (await route(req, env, url, ctx)) ?? (await env.ASSETS.fetch(req));
     } catch (e) {
       res = errorResponse(e);
     }
     return withSecurityHeaders(res);
   },
+
+  /** Cada 2 horas (wrangler.jsonc → triggers): revisa la nota de Claude por si hubo sesiones desde la app de TickTick. */
+  async scheduled(_ctrl: ScheduledController, rawEnv: Env, ctx: ExecutionContext): Promise<void> {
+    const env = trimSecrets(rawEnv);
+    // En desarrollo local (DEV_MODE) se usa una URL de localhost para que MOCK_DATA aplique y nunca toque el TickTick real.
+    const url = new URL(env.DEV_MODE === 'true' ? 'http://localhost/' : 'https://cron.invalid/');
+    ctx.waitUntil(runNoteSync(env, url, env.TIMEZONE || 'America/Lima'));
+  },
 } satisfies ExportedHandler<Env>;
 
-async function route(req: Request, env: Env, url: URL): Promise<Response | null> {
+async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response | null> {
   const p = url.pathname;
 
   if (p.startsWith('/oauth/')) return handleOAuth(req, env, url);
@@ -98,13 +107,17 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
 
       case '/api/study': {
         const { client } = await getTickTickClient(env, url);
-        return json(await ttCall(() => getStudy(client, studyStore(env, url), { now: new Date(), timeZone: tz })));
+        const [study, note] = await Promise.all([
+          ttCall(() => getStudy(client, studyStore(env, url), { now: new Date(), timeZone: tz })),
+          noteStatus(env.TOKENS),
+        ]);
+        return json({ ...study, note });
       }
 
       case '/api/grades': {
-        const ctx = await gradesContext(env, url, tz);
-        const book = await ctx.store.get(ctx.cycleStart);
-        return json(buildResult(book, ctx.courses));
+        const g = await gradesContext(env, url, tz);
+        const book = await g.store.get(g.cycleStart);
+        return json(buildResult(book, g.courses));
       }
 
       case '/api/study/history': {
@@ -114,36 +127,56 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
     }
   }
 
-  if (p.startsWith('/api/study/')) return studyAction(req, env, url, tz);
+  if (p.startsWith('/api/study/')) {
+    const res = await studyAction(req, env, url, tz);
+    syncLater(ctx, env, url, tz);
+    return res;
+  }
+
+  // Nota «resumen para Claude» en TickTick: contexto escrito a mano y actualización inmediata.
+  if (p === '/api/claude-note/context' || p === '/api/claude-note/sync') {
+    if (req.method !== (p.endsWith('/sync') ? 'POST' : 'PUT')) throw new ApiError('bad_request', 405, 'Método no permitido.');
+    assertSameOrigin(req, url);
+    if (p.endsWith('/context')) await saveContext(env.TOKENS, (await readJson(req)).text);
+    await runNoteSync(env, url, tz, true);
+    return json(await noteStatus(env.TOKENS));
+  }
 
   if (p === '/api/grades/course' || p === '/api/grades/prior') {
     if (req.method !== 'PUT') throw new ApiError('bad_request', 405, 'Usa PUT.');
     assertSameOrigin(req, url);
     const body = await readJson(req);
-    const ctx = await gradesContext(env, url, tz);
-    const book = await ctx.store.get(ctx.cycleStart);
+    const g = await gradesContext(env, url, tz);
+    const book = await g.store.get(g.cycleStart);
     if (p.endsWith('/prior')) {
       book.prior = validatePrior(body);
     } else {
       const name = typeof body.name === 'string' ? body.name.trim() : '';
-      if (!ctx.courses.includes(name) && !book.courses[name]) throw new ApiError('bad_request', 400, `Curso desconocido: ${name}`);
+      if (!g.courses.includes(name) && !book.courses[name]) throw new ApiError('bad_request', 400, `Curso desconocido: ${name}`);
       book.courses[name] = validateCourse(body);
     }
-    await ctx.store.put(book);
+    await g.store.put(book);
     // Sin inicio de ciclo guardado, la fecha por defecto avanza cada lunes (y con ella el libro): se fija al guardar notas.
-    if (!ctx.pinned) await saveCycleStart(ctx.study, ctx.cycleStart, { now: new Date(), timeZone: tz });
-    return json(buildResult(book, ctx.courses));
+    if (!g.pinned) await saveCycleStart(g.study, g.cycleStart, { now: new Date(), timeZone: tz });
+    syncLater(ctx, env, url, tz);
+    return json(buildResult(book, g.courses));
   }
 
   // Ocultar una "evaluación" que no lo es (p. ej. una tarea de práctica) o restaurarlas todas.
   if (p === '/api/evaluations/ignore' || p === '/api/evaluations/restore') {
     if (req.method !== 'POST') throw new ApiError('bad_request', 405, 'Usa POST.');
     assertSameOrigin(req, url);
-    if (p.endsWith('/restore')) return json(await restoreEvals(env.TOKENS));
+    if (p.endsWith('/restore')) {
+      const r = await restoreEvals(env.TOKENS);
+      syncLater(ctx, env, url, tz);
+      return json(r);
+    }
     const body = await readJson(req);
     const taskId = typeof body.taskId === 'string' ? body.taskId : '';
     if (!ID_RE.test(taskId)) throw new ApiError('bad_request', 400, 'Identificador inválido.');
-    return json(await ignoreEval(env.TOKENS, taskId));
+    const r = await ignoreEval(env.TOKENS, taskId);
+    syncLater(ctx, env, url, tz);
+    return json(r);
   }
 
   const m = p.match(/^\/api\/tasks\/([^/]+)\/([^/]+)\/complete$/);
@@ -155,10 +188,31 @@ async function route(req: Request, env: Env, url: URL): Promise<Response | null>
     if (!ID_RE.test(projectId) || !ID_RE.test(taskId)) throw new ApiError('bad_request', 400, 'Identificador inválido.');
     const { client } = await getTickTickClient(env, url);
     await ttCall(() => client.completeTask(projectId, taskId));
+    syncLater(ctx, env, url, tz);
     return json({ ok: true, projectId, taskId });
   }
 
   throw new ApiError('not_found', 404, 'Ruta no encontrada.');
+}
+
+/**
+ * Revisa y reescribe la nota «resumen para Claude» en TickTick. Nunca lanza: si falla
+ * (p. ej. TickTick desconectado), guarda el error para mostrarlo en la Bitácora.
+ */
+async function runNoteSync(env: Env, url: URL, tz: string, force = false): Promise<void> {
+  try {
+    const { client } = await getTickTickClient(env, url);
+    await syncNote(client, env.TOKENS, { now: new Date(), timeZone: tz, strategy: pickStrategy(url, env), force });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('Nota para Claude:', msg);
+    await recordNoteError(env.TOKENS, msg).catch(() => {});
+  }
+}
+
+/** Después de una acción que cambia datos: la nota se actualiza en segundo plano, sin demorar la respuesta. */
+function syncLater(ctx: ExecutionContext, env: Env, url: URL, tz: string) {
+  ctx.waitUntil(runNoteSync(env, url, tz));
 }
 
 /** Ciclo actual y cursos visibles (los mismos de Estudio) para el registro de notas. */

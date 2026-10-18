@@ -270,6 +270,26 @@ describe('constancia (rachas)', () => {
     expect(h.today).toBe(weekRange(new Date(), TZ).today);
     expect(h.streak.totalDays).toBeGreaterThan(0);
   });
+  it('el resumen para la nota de Claude da los mismos números que la vista de la semana', async () => {
+    const { getStudyDigest, saveCycleStart } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    const now = new Date();
+    const [week, dg] = await Promise.all([
+      getStudy(client(), store, { now, timeZone: TZ }),
+      getStudyDigest(client(), store, { now, timeZone: TZ, weeks: 4 }),
+    ]);
+    const cur = dg.weeks.at(-1)!;
+    expect(cur.start).toBe(week.weekStart);
+    for (const c of week.courses) expect(cur.byCourse[c.name] ?? 0).toBe(c.minutes);
+    expect(cur.other).toBe(week.otherMinutes);
+    expect(cur.total).toBe(week.totalMinutes);
+    const dayTotal = Object.values(dg.days).flatMap((d) => Object.values(d)).reduce((a, b) => a + b, 0);
+    expect(dayTotal).toBe(cur.total);
+    expect(dg.weeks).toHaveLength(5);
+    // Con el ciclo empezando esta semana, no hay semanas anteriores.
+    await saveCycleStart(store, week.weekStart, { now, timeZone: TZ });
+    expect((await getStudyDigest(client(), store, { now, timeZone: TZ })).weeks).toHaveLength(1);
+  });
   it('minutos por día y curso: suman lo mismo que el día y que la semana del curso', async () => {
     const { getHistory, mondayOf } = await import('../src/services/study');
     const h = await getHistory(client(), new StudyStore(memKV()), { now: new Date(), timeZone: TZ });

@@ -460,6 +460,11 @@ async function studyAction(path, method, body) {
       studyMsg = { ok: true, t: r.grades === 'new' ? 'Inicio del ciclo guardado. Es otro ciclo: Notas empieza en blanco (las notas anteriores siguen guardadas con la fecha anterior).' : 'Inicio del ciclo guardado.' };
       load('gr').then(render);
     }
+    else if (path.endsWith('/claude-note/context')) {
+      studyMsg = r.error ? { ok: false, t: 'Contexto guardado, pero la nota no se pudo actualizar: ' + r.error } : { ok: true, t: 'Contexto guardado y nota actualizada en TickTick.' };
+      moreDirty = false;
+    }
+    else if (path.endsWith('/claude-note/sync')) studyMsg = r.error ? { ok: false, t: 'No se pudo actualizar la nota: ' + r.error } : { ok: true, t: 'Nota para Claude actualizada en TickTick.' };
     else if (method === 'DELETE') studyMsg = { ok: true, t: 'Sesión borrada.' };
     return r;
   } catch (e) {
@@ -532,6 +537,8 @@ function renderStudy() {
       b.classList.toggle('armed', on); b.textContent = on ? '¿Borrar?' : 'Borrar';
     });
   }
+  const cs = document.getElementById('claude-status');
+  if (cs && d.note) cs.innerHTML = claudeStatus(d.note);
 }
 
 /* ---------- ritmo y pronóstico (lógica en pace.js) ---------- */
@@ -677,14 +684,46 @@ function renderStudyMore(d) {
       return `<li><span class="s-main">${esc(x.course || 'Otros')} · ${fmtMin(x.minutes)}</span><span class="s-sub">${esc(cap(fDayShort.format(new Date(x.start))))} · ${fTime.format(new Date(x.start))} · ${esc(src)}</span><button type="button" data-study-del="${esc(key)}" class="${studyArmed === key ? 'armed' : ''}">${studyArmed === key ? '¿Borrar?' : 'Borrar'}</button></li>`;
     }).join('') + '</ul>'
     : '<p class="hint">Aún no hay sesiones esta semana.</p>';
+  const claude = d.note ? claudeForm(d.note) : '';
   const opt = d.courseOptions || [];
   const courses = `<form class="sform" data-study-form="courses"><h3>Cursos</h3>
     <p class="hint">Salen de las columnas de tu inbox de TickTick. Desmarca los que no quieras ver (p. ej. de otro ciclo).</p>
     ${opt.map(o => `<label class="check-row"><input type="checkbox" ${o.source === 'extra' ? 'data-course-extra' : 'data-course-col'}="${esc(o.name)}"${o.visible ? ' checked' : ''}> ${esc(o.name)}${o.source === 'extra' ? ' <span class="muted">· agregado</span>' : ''}</label>`).join('')}
     <label>Agregar curso<input name="newCourse" maxlength="40" placeholder="Ej.: Inglés" autocomplete="off"></label>
     <button type="submit">Guardar cursos</button></form>`;
-  return manual + goals + courses + `<div><h3>Sesiones de la semana</h3>${list}</div>`;
+  return manual + goals + claude + courses + `<div><h3>Sesiones de la semana</h3>${list}</div>`;
 }
+
+/* ---------- resumen para Claude (nota en TickTick que la Bitácora reescribe sola) ---------- */
+const CLAUDE_MEMORY_LINE = 'Recuerda: para cualquier tema de mis estudios (horas, metas, evaluaciones, notas), primero lee en TickTick la nota «📒 Bitácora — resumen para Claude» de la lista «Bitácora». La actualiza sola mi app Bitácora.';
+let claudePreviewOpen = false;
+
+function claudeForm(n) {
+  return `<form class="sform claude-form" data-study-form="claude"><h3>Resumen para Claude</h3>
+    <p class="hint">La Bitácora mantiene en TickTick la nota <b>${esc(n.title)}</b> (lista «${esc(n.list)}») con tus horas por curso y por día, metas, próximas evaluaciones, notas y este contexto. Los chats de Claude la leen con el conector de TickTick.</p>
+    <label>Contexto para Claude<textarea name="context" rows="4" maxlength="1500" placeholder="Ej.: Esta semana priorizo EPP por la PC3 del jueves 22; la PC2 de Aplicada recién es el 07/11.">${esc(n.context)}</textarea></label>
+    <button type="submit">Guardar contexto</button>
+    <div id="claude-status" class="claude-status">${claudeStatus(n)}</div>
+    ${n.content ? `<details class="claude-preview"${claudePreviewOpen ? ' open' : ''}><summary>Ver lo que lee Claude</summary><pre>${esc(n.content)}</pre></details>` : ''}
+    <p class="hint">Para que Claude la use, díselo una vez en un chat: <q>${esc(CLAUDE_MEMORY_LINE)}</q> <button type="button" class="linkish" data-copy="${esc(CLAUDE_MEMORY_LINE)}">Copiar</button></p>
+  </form>`;
+}
+
+/** Cuándo se escribió la nota, enlace y errores. Se redibuja siempre (no depende de si editas el contexto). */
+function claudeStatus(n) {
+  const at = t => `${cap(fDayShort.format(new Date(t)))} · ${fTime.format(new Date(t))}`;
+  const open = !n.url ? '' : DESKTOP_TT
+    ? ` · <a href="${esc('ticktick://v1/search?keyword=' + encodeURIComponent('resumen para Claude'))}" data-web="${esc(n.url)}" title="Buscar en la app de TickTick (Shift + clic: versión web)">Abrir en TickTick ↗</a>`
+    : ` · <a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">Abrir en TickTick ↗</a>`;
+  let h = `<p class="hint">${n.writtenAt ? `Nota escrita: <b>${esc(at(n.writtenAt))}</b>` : 'La nota aún no existe en TickTick.'}`
+    + (n.checkedAt && n.writtenAt && n.checkedAt > n.writtenAt ? ` · revisada ${esc(fTime.format(new Date(n.checkedAt)))}, sin cambios` : '')
+    + `${open} · <button type="button" class="linkish" data-claude-sync${studyBusy ? ' disabled' : ''}>${n.writtenAt ? 'Actualizar ahora' : 'Crear la nota'}</button></p>`;
+  if (n.error) h += `<p class="msg bad">No se pudo actualizar la nota: ${esc(n.error)}</p>`;
+  return h;
+}
+document.addEventListener('toggle', ev => {
+  if (ev.target.classList && ev.target.classList.contains('claude-preview')) claudePreviewOpen = ev.target.open;
+}, true);
 
 function armStudy(key) {
   studyArmed = key; clearTimeout(studyArmTimer); render();
@@ -693,6 +732,19 @@ function armStudy(key) {
 
 /** Clicks de la sección de estudio. Devuelve true si los manejó. */
 function studyClick(ev) {
+  if (ev.target.closest('[data-claude-sync]')) {
+    document.activeElement && document.activeElement.blur();
+    moreRenderedAt = null;
+    studyAction('/api/claude-note/sync', 'POST', {});
+    return true;
+  }
+  const cp = ev.target.closest('[data-copy]');
+  if (cp) {
+    const done = t => { cp.textContent = t; setTimeout(() => { cp.textContent = 'Copiar'; }, 2500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(cp.dataset.copy).then(() => done('Copiado ✓'), () => done('No se pudo copiar'));
+    else done('No se pudo copiar');
+    return true;
+  }
   const nav = ev.target.closest('[data-days-nav]');
   if (nav) {
     const cur = S.st.items && S.st.items.weekStart;
@@ -735,6 +787,11 @@ document.addEventListener('submit', ev => {
     if (minutes < 1) { studyMsg = { ok: false, t: 'Pon una duración de al menos 1 minuto.' }; render(); return; }
     moreRenderedAt = null;
     studyAction('/api/study/manual', 'POST', { course: f.course.value, minutes, date: f.date.value });
+  } else if (f.dataset.studyForm === 'claude') {
+    // Sin foco dentro del panel, se redibuja al terminar (vista previa nueva).
+    document.activeElement && document.activeElement.blur();
+    moreRenderedAt = null;
+    studyAction('/api/claude-note/context', 'PUT', { text: f.context.value });
   } else if (f.dataset.studyForm === 'cycle') {
     studyAction('/api/study/cycle', 'PUT', { start: f.start.value });
   } else if (f.dataset.studyForm === 'courses') {

@@ -102,10 +102,25 @@ export class TickTickClient {
     return this.request<TickTickColumn[]>('GET', `/project/${enc(projectId)}/column`).then((r) => r ?? []);
   }
 
+  /** POST /project — crea una lista. La doc lista 200 (Project) y 201 sin cuerpo: puede volver `undefined`. */
+  createProject(p: { name: string; color?: string; viewMode?: 'list' | 'kanban' | 'timeline'; kind?: 'TASK' | 'NOTE' }): Promise<TickTickProject | undefined> {
+    return this.request('POST', '/project', p);
+  }
+
   // ---------- tareas ----------
 
   getTask(projectId: string, taskId: string): Promise<TickTickTask> {
     return this.request('GET', `/project/${enc(projectId)}/task/${enc(taskId)}`);
+  }
+
+  /** POST /task — `title` y `projectId` obligatorios. La doc lista 200 (Task) y 201 sin cuerpo: puede volver `undefined`. */
+  createTask(t: { projectId: string; title: string; content?: string; priority?: number }): Promise<TickTickTask | undefined> {
+    return this.request('POST', '/task', t);
+  }
+
+  /** POST /task/{taskId} — `id` y `projectId` obligatorios; se mandan solo los campos que cambian. */
+  updateTask(t: { id: string; projectId: string; title?: string; content?: string }): Promise<TickTickTask | undefined> {
+    return this.request('POST', `/task/${enc(t.id)}`, t);
   }
 
   /** POST /project/{projectId}/task/{taskId}/complete — 200 sin cuerpo. */

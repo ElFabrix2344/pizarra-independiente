@@ -8,6 +8,20 @@ import { addDays, dayKeyInZone, startOfDay, toRfc3339InZone } from './lib/time';
 const TZ = 'America/Lima';
 const completed = new Set<string>();
 
+// Listas y tareas creadas por la app (p. ej. la nota para Claude), en memoria.
+const createdProjects: TickTickProject[] = [];
+const appTasks: TickTickTask[] = [];
+let appSeq = 0;
+/** Solo para tests: las tareas creadas por la app (se pueden borrar o completar a mano). */
+export function _mockAppTasks() {
+  return appTasks;
+}
+/** Solo para tests: vacía listas y tareas creadas. */
+export function _resetMockApp() {
+  createdProjects.length = 0;
+  appTasks.length = 0;
+}
+
 function at(key: string, h: number, m = 0): Date {
   return new Date(startOfDay(key, TZ).getTime() + (h * 60 + m) * 60000);
 }
@@ -167,15 +181,39 @@ export const mockFetch: typeof fetch = async (input, init) => {
   const p = url.pathname;
 
   if (url.host === 'api.ticktick.com') {
-    if (p === '/open/v1/project' && req.method === 'GET') return json(projects);
-    let m = p.match(/^\/open\/v1\/project\/([^/]+)\/column$/);
+    if (p === '/open/v1/project' && req.method === 'GET') return json([...projects, ...createdProjects]);
+    if (p === '/open/v1/project' && req.method === 'POST') {
+      const b = (await req.json()) as Partial<TickTickProject>;
+      if (!b.name) return json(undefined, 400);
+      const proj: TickTickProject = { id: 'p-app' + ++appSeq, name: b.name, viewMode: b.viewMode ?? 'list', kind: b.kind ?? 'TASK' };
+      createdProjects.push(proj);
+      return json(proj);
+    }
+    if (p === '/open/v1/task' && req.method === 'POST') {
+      const b = (await req.json()) as Partial<TickTickTask>;
+      if (!b.title || !b.projectId) return json(undefined, 400);
+      if (!createdProjects.some((x) => x.id === b.projectId) && !projects.some((x) => x.id === b.projectId)) return json(undefined, 404);
+      const t: TickTickTask = { id: 't-app' + ++appSeq, projectId: b.projectId, title: b.title, content: b.content ?? '', priority: 0, status: 0, kind: 'TEXT' };
+      appTasks.push(t);
+      return json(t);
+    }
+    let m = p.match(/^\/open\/v1\/task\/([^/]+)$/);
+    if (m && req.method === 'POST' && m[1] !== 'undone' && m[1] !== 'filter') {
+      const b = (await req.json()) as Partial<TickTickTask>;
+      const t = appTasks.find((x) => x.id === decodeURIComponent(m![1]!) && x.projectId === b.projectId);
+      if (!t) return json(undefined, 404);
+      if (b.title !== undefined) t.title = b.title;
+      if (b.content !== undefined) t.content = b.content;
+      return json(t);
+    }
+    m = p.match(/^\/open\/v1\/project\/([^/]+)\/column$/);
     if (m) {
       const pid = m[1] === 'inbox' ? 'inbox1234' : m[1];
       return json(columns.filter((c) => c.projectId === pid));
     }
     m = p.match(/^\/open\/v1\/project\/([^/]+)\/task\/([^/]+)$/);
     if (m && req.method === 'GET') {
-      const t = tasks(now).find((x) => x.id === decodeURIComponent(m![2]!) && x.projectId === decodeURIComponent(m![1]!));
+      const t = [...tasks(now), ...appTasks].find((x) => x.id === decodeURIComponent(m![2]!) && x.projectId === decodeURIComponent(m![1]!));
       return t ? json(t) : json(undefined, 404);
     }
     if (p === '/open/v1/focus' && req.method === 'GET') {
@@ -208,9 +246,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
     m = p.match(/^\/open\/v1\/project\/([^/]+)\/data$/);
     if (m) {
       const id = decodeURIComponent(m[1]!);
-      const proj = id === 'inbox' ? { id: 'inbox1234', name: 'Inbox' } : projects.find((x) => x.id === id);
+      const proj = id === 'inbox' ? { id: 'inbox1234', name: 'Inbox' } : [...projects, ...createdProjects].find((x) => x.id === id);
       if (!proj) return json(undefined, 404);
-      return json({ project: proj, tasks: tasks(now).filter((t) => t.projectId === proj.id), columns: columns.filter((c) => c.projectId === proj.id) });
+      const open = [...tasks(now), ...appTasks.filter((t) => t.status === 0)];
+      return json({ project: proj, tasks: open.filter((t) => t.projectId === proj.id), columns: columns.filter((c) => c.projectId === proj.id) });
     }
     m = p.match(/^\/open\/v1\/project\/([^/]+)\/task\/([^/]+)\/complete$/);
     if (m && req.method === 'POST') {

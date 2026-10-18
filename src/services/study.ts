@@ -483,6 +483,76 @@ export async function getHistory(
   };
 }
 
+// ---------- resumen compacto (para la nota de Claude) ----------
+
+export interface StudyDigest {
+  today: string;
+  weekStart: string;
+  weekEnd: string;
+  cycleStart: string;
+  /** Cursos visibles, en orden, con su meta semanal (minutos). */
+  courses: Array<{ name: string; goalMinutes: number | null }>;
+  /** Las `weeks` semanas completas anteriores (la más antigua primero) y, al final, la actual. */
+  weeks: HistoryWeek[];
+  /** Semana actual: minutos por día y curso ('' = otros / sin curso visible). */
+  days: Record<string, Record<string, number>>;
+  active: ActiveTimer | null;
+}
+
+/**
+ * Semana actual por día y curso + las semanas anteriores (desde el inicio del ciclo).
+ * La semana actual se lee igual que en getStudy (mismos números que la Bitácora); las anteriores,
+ * con un tope de búsquedas de tareas para no pasar el límite de subpeticiones.
+ */
+export async function getStudyDigest(
+  client: TickTickClient,
+  store: StudyStore,
+  opts: { now: Date; timeZone: string; weeks?: number; lookups?: number },
+): Promise<StudyDigest> {
+  const { now, timeZone: tz } = opts;
+  const w = weekRange(now, tz);
+  const [cat, settings, active] = await Promise.all([loadCourses(client, now.getTime()), store.getSettings(), store.getActive()]);
+  const cycleStart = settings.cycleStart ?? defaultCycleStart(w.monday);
+  let first = addDays(w.monday, -7 * (opts.weeks ?? 4));
+  if (mondayOf(cycleStart) > first) first = mondayOf(cycleStart) > w.monday ? w.monday : mondayOf(cycleStart);
+  const [current, previous] = await Promise.all([
+    collectSessions(client, cat, settings, w.from, w.to),
+    first < w.monday
+      ? collectSessions(client, cat, settings, startOfDay(first, tz), new Date(w.from.getTime() - 1), { lookups: opts.lookups ?? 10 })
+      : Promise.resolve([]),
+  ]);
+  const sessions = [...current, ...previous];
+  const visible = visibleCourses(cat, settings);
+
+  const weeks: HistoryWeek[] = [];
+  for (let m = first; m <= w.monday; m = addDays(m, 7)) weeks.push({ start: m, end: addDays(m, 6), byCourse: {}, other: 0, total: 0 });
+  const index = new Map(weeks.map((x, i) => [x.start, i]));
+  const days: Record<string, Record<string, number>> = {};
+  for (const s of sessions) {
+    const day = dayKeyInZone(new Date(s.start), tz);
+    const wk = weeks[index.get(mondayOf(day)) ?? -1];
+    if (!wk) continue;
+    const ck = s.course && visible.includes(s.course) ? s.course : '';
+    wk.total += s.minutes;
+    if (ck) wk.byCourse[ck] = (wk.byCourse[ck] ?? 0) + s.minutes;
+    else wk.other += s.minutes;
+    if (wk.start === w.monday) {
+      const dc = (days[day] ??= {});
+      dc[ck] = (dc[ck] ?? 0) + s.minutes;
+    }
+  }
+  return {
+    today: w.today,
+    weekStart: w.monday,
+    weekEnd: w.sunday,
+    cycleStart,
+    courses: visible.map((name) => ({ name, goalMinutes: settings.goals[name] ?? null })),
+    weeks,
+    days,
+    active,
+  };
+}
+
 /** Valida la fecha de inicio del ciclo ("YYYY-MM-DD", no futura, de hace menos de un año). */
 export function validCycleStart(start: unknown, opts: { now: Date; timeZone: string }): string {
   const today = dayKeyInZone(opts.now, opts.timeZone);

@@ -37,6 +37,8 @@ Todas las rutas exigen sesión de Cloudflare Access.
 | PUT | `/api/study/courses` | Cursos visibles: `{ "hidden": ["EFE"], "extra": ["Inglés"] }` |
 | PUT | `/api/study/goals` | Metas semanales en minutos: `{ "goals": { "HEE": 300 } }` |
 | DELETE | `/api/study/sessions/:type/:id` | Borra un registro de enfoque (`type` 0 = pomodoro, 1 = cronómetro) |
+| PUT | `/api/claude-note/context` | Guarda el contexto para Claude (`{ "text" }`, hasta 1500 caracteres) y reescribe la nota |
+| POST | `/api/claude-note/sync` | Reescribe ya la nota «resumen para Claude» en TickTick |
 | GET | `/api/status` | Qué cuentas están conectadas y comprobación de formato de las credenciales (sin mostrar secretos) |
 | GET | `/api/debug/ticktick` | Diagnóstico: compara las dos estrategias de lectura de TickTick y muestra los campos reales |
 | GET | `/oauth/google/start`, `/oauth/ticktick/start` | Conectan cada cuenta (OAuth) |
@@ -54,6 +56,7 @@ src/
   store.ts              tokens en KV, cifrados
   services/tasks.ts     reglas del panel para TickTick (vencidas, semana, evaluaciones)
   services/calendar.ts  reglas del panel para Calendar
+  services/claudeNote.ts nota «resumen para Claude» que la Bitácora mantiene en TickTick
   lib/ticktick/         ← cliente reutilizable de la TickTick Open API (sin dependencias del panel)
   lib/google.ts         OAuth de Google y Calendar API v3
   lib/time.ts           utilidades de fecha por zona horaria
@@ -292,6 +295,16 @@ Por qué importa cada regla:
 - **Constancia** (visible en Estudio): un cuadrito por día desde el inicio del ciclo, más intenso cuanto más estudiaste (niveles: 1 min, 30 min, 1 h, 2 h, 3 h+; escala de un tono validada con `--ordinal` en claro y oscuro), con la racha actual (sigue viva hasta que termine el día), la mejor racha y los días con estudio. Usa los mismos datos del historial, que se cargan al abrir la app, tras cada sesión y cada 30 min.
 - **Historial del ciclo** (panel desplegable, se carga al abrirlo): columnas apiladas por semana y curso desde el **inicio del ciclo** (editable; por defecto, 12 semanas), línea de la meta semanal total, detalle por semana al pasar el cursor o tocar, totales y promedio por curso y vista de tabla. Máximo 26 semanas. La paleta del gráfico está validada para daltonismo y contraste en claro y oscuro.
 
+## Resumen para Claude
+
+La memoria de los chats de Claude (claude.ai) no se puede escribir desde fuera, y copiar números ahí los deja viejos enseguida. Por eso la Bitácora mantiene en **tu TickTick** una nota que los chats leen con el conector de TickTick:
+
+- **Dónde**: lista «Bitácora» → tarea sin fecha «📒 Bitácora — resumen para Claude» (no aparece en Hoy ni en la Bitácora). Si la borras o la marcas como hecha, se vuelve a crear; si se pierde el estado, reutiliza la existente en vez de duplicarla.
+- **Qué tiene**: la semana actual por curso (hecho / meta / lo que falta) y por día, el cronómetro en marcha, las 4 semanas anteriores con su promedio, las próximas evaluaciones (70 días, misma regla que «Próximas evaluaciones»), las notas del ciclo y lo que escribas en **Contexto para Claude** (Estudio → «Agregar a mano · metas · resumen para Claude · sesiones»; hasta 1500 caracteres).
+- **Cuándo se actualiza**: después de cada acción que cambia datos (cronómetro, sesiones, metas, cursos, ciclo, notas, «Hecha», evaluaciones ocultas), cada 2 horas con un Cron Trigger (`triggers.crons` en `wrangler.jsonc`, para las sesiones hechas desde la app de TickTick y el cambio de día) y con «Actualizar ahora». Solo se reescribe si el contenido cambió (hash sin la línea de fecha).
+- **En Claude**: díselo una vez en un chat (o agrégalo en Configuración → Memoria): «Recuerda: para cualquier tema de mis estudios (horas, metas, evaluaciones, notas), primero lee en TickTick la nota «📒 Bitácora — resumen para Claude» de la lista «Bitácora». La actualiza sola mi app Bitácora.» El panel tiene un botón para copiar esa frase y «Ver lo que lee Claude» con el contenido exacto.
+- Estado en KV: `claude:note` (lista, tarea, hash, última revisión, error) y `claude:context`. Si algo falla (p. ej. TickTick desconectado), el error aparece en el panel y se reintenta en la próxima acción o a las 2 h. En desarrollo local la nota va al TickTick simulado; para probar el cron: `curl http://127.0.0.1:8787/cdn-cgi/local/scheduled`.
+
 ## Notas sobre las APIs (verificadas en la documentación oficial)
 
 - **TickTick** ([Open API](https://developer.ticktick.com/docs/openapi.md)):
@@ -300,4 +313,5 @@ Por qué importa cada regla:
   - Hay filtro por fechas: `POST /open/v1/task/undone` (rango de hasta 14 días, todos los proyectos incluido el inbox). El panel parte los rangos largos en tramos de 14 días. La doc no dice si el rango se aplica a `dueDate` o a `startDate`; por eso el backend vuelve a filtrar por fecha de vencimiento y existe `/api/debug/ticktick` para comprobarlo.
   - El objeto Task documentado no trae columna, pero en la práctica las respuestas sí incluyen `columnId` en listas con columnas (incluido el inbox). La etiqueta muestra «Lista · Columna»; en el inbox, solo la columna.
   - Verificado con datos reales: `/task/undone` y el recorrido completo de proyectos devuelven las mismas tareas, por eso la estrategia por defecto es `undone`.
+  - Nota para Claude: `POST /project` (lista, `name` obligatorio), `POST /task` (`title` y `projectId` obligatorios; la creación no admite `kind`, por eso es una tarea normal sin fecha) y `POST /task/{taskId}` (`id` y `projectId` obligatorios). La doc lista para crear tanto 200 con el objeto como 201 sin cuerpo; si no llega el id, se busca por nombre/título.
 - **Google Calendar** ([events.list](https://developers.google.com/workspace/calendar/api/v3/reference/events/list), [calendarList.list](https://developers.google.com/workspace/calendar/api/v3/reference/calendarList/list)): lee **todos los calendarios propios no ocultos** (`calendarList` con `minAccessRole=owner`): el principal y los que creaste, como el de clases. Los suscritos (feriados, calendarios de otros) quedan fuera. Para fijar la lista a mano, define `CALENDAR_IDS` (ids separados por comas, `primary` vale). Si un calendario secundario falla, se muestran los demás. Eventos con `singleEvents=true`, `orderBy=startTime`, `timeMin`/`timeMax` en RFC3339 y `timeZone=America/Lima`; los repetidos en dos calendarios (mismo `iCalUID` y hora) salen una vez. Scope `calendar.readonly`.
