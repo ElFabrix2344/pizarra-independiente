@@ -416,7 +416,7 @@ section.study{display:flex;flex-direction:column;gap:12px;min-width:0}
 :root[data-theme="dark"] .viz{--h1:#184f95;--h2:#256abf;--h3:#3987e5;--h4:#6da7ec;--h5:#9ec5f4}
 .streak{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .st-head{display:flex;flex-direction:column;gap:8px}
-.st-stats{display:flex;gap:28px;flex-wrap:wrap}
+.st-stats{display:flex;gap:14px 28px;flex-wrap:wrap}
 .st-stats .stat{display:flex;flex-direction:column;gap:1px}
 .st-stats .v{font-family:var(--f-display);font-weight:700;font-size:1.7rem;line-height:1.05}
 .st-stats .v small{font-size:.6em;color:var(--muted);font-weight:600}
@@ -433,6 +433,15 @@ section.study{display:flex;flex-direction:column;gap:12px;min-width:0}
 .heat-legend i{display:inline-block;width:11px;height:11px;border-radius:2px}
 .heat-legend .hl1{background:var(--h1)} .heat-legend .hl2{background:var(--h2)} .heat-legend .hl3{background:var(--h3)} .heat-legend .hl4{background:var(--h4)} .heat-legend .hl5{background:var(--h5)}
 .heat-legend span{margin:0 4px}
+/* Flor de meta cumplida: siempre cae sobre el tono pleno (h5), así que contrasta con él en cada tema. */
+.viz{--heat-petal:#F7B3CD;--heat-core:#FFD166}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .viz{--heat-petal:#C2185B;--heat-core:#7A4E00}}
+:root[data-theme="dark"] .viz{--heat-petal:#C2185B;--heat-core:#7A4E00}
+.heat .hf{pointer-events:none}
+.heat .hf-petal{fill:var(--heat-petal)} .heat .hf-core{fill:var(--heat-core)}
+.heat-legend .hf-key{display:inline-flex;align-items:center;gap:5px;margin:0 0 0 8px}
+.heat-legend .hf-key svg{display:block}
+.heat-wrap .tip .tip-goal{color:var(--muted)}
 
 /* ---------- notas ---------- */
 section.grades{display:flex;flex-direction:column;gap:12px;min-width:0}

@@ -526,6 +526,8 @@ function renderStudy() {
   g += dayTable(d) + '</div>';
   main.innerHTML = t + g;
   renderDaily();
+  // El mapa de constancia usa la meta diaria (llega con /api/study): se redibuja si cambió o si se dibujó sin ella.
+  if (H.data && heatGoal !== dailyGoalMin()) renderStreak();
 
   // Panel desplegable: solo se redibuja con datos nuevos y si no lo estás editando.
   const more = $('study-more');
@@ -1466,28 +1468,49 @@ function gradeInfoFor(x) {
 /* ---------- constancia (mapa de días) ---------- */
 const fDayTip = new Intl.DateTimeFormat('es-PE', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
 const fMonShort = new Intl.DateTimeFormat('es-PE', { timeZone: 'UTC', month: 'short' });
-const HEAT_BINS = [1, 30, 60, 120, 180]; // minutos: cada umbral abre un nivel (1–5)
-const heatLevel = m => { let l = 0; HEAT_BINS.forEach((b, i) => { if (m >= b) l = i + 1; }); return l; };
+const HEAT_BINS = [1, 30, 60, 120, 180]; // minutos, sin meta diaria: cada umbral abre un nivel (1–5)
+/** Con meta diaria, los niveles van por cuartos de la meta (4 h → 1, 2, 3 y 4 h): el color pleno es la meta cumplida. */
+function heatBins(goal) { return goal ? [1, goal / 4, goal / 2, (3 * goal) / 4, goal] : HEAT_BINS; }
+const heatLevel = (m, bins) => { let l = 0; bins.forEach((b, i) => { if (m >= b) l = i + 1; }); return l; };
+const dailyGoalMin = () => (S.st.items && S.st.items.daily && S.st.items.daily.minutes) || 0;
+let heatGoal = null; // meta con la que se dibujó el mapa (si cambia, se redibuja)
+
+/** Flor de "meta cumplida" dentro de un cuadrito (no tapa el puntero: la ayuda sigue funcionando). */
+function heatFlower(cx, cy, size) {
+  const r = size * 0.17;
+  let g = '<g class="hf">';
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / 5;
+    g += `<circle class="hf-petal" cx="${(cx + r * Math.cos(a)).toFixed(1)}" cy="${(cy + r * Math.sin(a)).toFixed(1)}" r="${(r * 0.62).toFixed(1)}"/>`;
+  }
+  return g + `<circle class="hf-core" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${(r * 0.5).toFixed(1)}"/></g>`;
+}
 
 function renderStreak() {
   const el = $('streak');
   if (!el) return;
   const h = H.data;
   if (!h || !h.streak) { el.innerHTML = H.status === 'loading' ? '<div class="skel"></div>' : ''; return; }
-  const s = h.streak;
+  const s = h.streak, goal = dailyGoalMin(), bins = heatBins(goal);
+  heatGoal = goal;
+  const start = h.cycleStart > h.from ? h.cycleStart : h.from;
+  const goalDays = goal ? Object.entries(h.days).filter(([k, m]) => k >= start && k <= h.today && m >= goal).length : 0;
   const keep = !s.todayDone && s.current > 0 ? '<span class="st-keep">Estudia hoy para mantenerla</span>' : '';
   let out = `<div class="st-head"><span class="eyebrow">Constancia</span>
     <div class="st-stats">
       <div class="stat"><span class="v">${s.current}</span><span class="l">${s.current === 1 ? 'día' : 'días'} de racha${s.todayDone ? ' · hoy ✓' : ''}</span>${keep}</div>
       <div class="stat"><span class="v">${s.best}</span><span class="l">mejor racha</span></div>
       <div class="stat"><span class="v">${s.activeDays}<small>/${s.totalDays}</small></span><span class="l">días con estudio</span></div>
+      ${goal ? `<div class="stat"><span class="v">${goalDays}</span><span class="l">${goalDays === 1 ? 'día' : 'días'} con ${fmtMin(goal)}</span></div>` : ''}
     </div></div>`;
-  out += `<div class="heat-wrap" id="heat-wrap">${heatSvg(h, el.clientWidth - 36)}<div class="tip" id="heat-tip" hidden></div></div>`;
-  out += `<div class="heat-legend" aria-hidden="true"><span>Menos</span>${[1, 2, 3, 4, 5].map(l => `<i class="hl${l}"></i>`).join('')}<span>Más</span><span class="muted">· 1 min, 30 min, 1 h, 2 h, 3 h+</span></div>`;
+  out += `<div class="heat-wrap" id="heat-wrap">${heatSvg(h, el.clientWidth - 36, bins, goal, goalDays)}<div class="tip" id="heat-tip" hidden></div></div>`;
+  const ticks = bins.map((b, i) => fmtMin(b) + (i === bins.length - 1 ? '+' : '')).join(', ');
+  out += `<div class="heat-legend" aria-hidden="true"><span>Menos</span>${[1, 2, 3, 4, 5].map(l => `<i class="hl${l}"></i>`).join('')}<span>Más</span><span class="muted">· ${ticks}</span>`
+    + (goal ? `<span class="hf-key"><svg class="heat" width="13" height="13" viewBox="0 0 13 13"><rect class="hl5" width="13" height="13" rx="2"/>${heatFlower(6.5, 6.5, 13)}</svg>meta cumplida</span>` : '') + '</div>';
   el.innerHTML = out;
 }
 
-function heatSvg(h, avail) {
+function heatSvg(h, avail, bins = HEAT_BINS, goal = 0, goalDays = 0) {
   const gap = 3, left = 18, top = 16, n = h.weeks.length;
   // Cuadritos que llenan el ancho disponible (entre 12 y 22 px); en el celular, el SVG escala hacia abajo.
   const cell = Math.max(12, Math.min(22, Math.floor(((avail || 0) - left) / n) - gap));
@@ -1507,10 +1530,12 @@ function heatSvg(h, avail) {
       const k = addDays(w.start, r);
       if (k > h.today || k < start) continue;
       const m = h.days[k] || 0;
-      g += `<rect class="hc hl${heatLevel(m)}${k === h.today ? ' today' : ''}" x="${x}" y="${top + r * step}" width="${cell}" height="${cell}" rx="${cell > 16 ? 3 : 2}" data-k="${k}" data-m="${m}"/>`;
+      g += `<rect class="hc hl${heatLevel(m, bins)}${k === h.today ? ' today' : ''}" x="${x}" y="${top + r * step}" width="${cell}" height="${cell}" rx="${cell > 16 ? 3 : 2}" data-k="${k}" data-m="${m}"/>`;
+      if (goal && m >= goal) g += heatFlower(x + cell / 2, top + r * step + cell / 2, cell);
     }
   });
-  const label = `Mapa de constancia: ${h.streak.activeDays} de ${h.streak.totalDays} días con estudio`;
+  const label = `Mapa de constancia: ${h.streak.activeDays} de ${h.streak.totalDays} días con estudio`
+    + (goal ? `; ${goalDays} ${goalDays === 1 ? 'día' : 'días'} con la meta de ${fmtMin(goal)}` : '');
   return `<svg class="heat" width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="${esc(label)}">${g}</svg>`;
 }
 
@@ -1519,7 +1544,15 @@ function showHeatTip(cellEl) {
   if (!tip || !wrap) return;
   if (!cellEl) { tip.hidden = true; return; }
   const k = cellEl.dataset.k, m = Number(cellEl.dataset.m);
-  tip.innerHTML = `<b>${esc(cap(fDayTip.format(keyUTC(k))))}</b><span>${m ? fmtMin(m) + ' de estudio' : 'Sin estudio'}</span>`;
+  const daily = S.st.items && S.st.items.daily, goal = daily && daily.minutes;
+  let note = '';
+  if (goal) {
+    const free = !daily.weekdays.includes(dowOf(k)), b = Pace.bonus(m, goal);
+    if (m >= goal) note = `Meta de ${fmtMin(goal)} cumplida ✓${b.flowers > 1 ? ` · ${b.flowers} flores` : ''}${free ? ' (día libre)' : ''}`;
+    else if (free) note = 'Día libre';
+    else note = `${k === H.data.today ? 'Faltan' : 'Faltaron'} ${fmtMin(goal - m)} para la meta`;
+  }
+  tip.innerHTML = `<b>${esc(cap(fDayTip.format(keyUTC(k))))}</b><span>${m ? fmtMin(m) + ' de estudio' : 'Sin estudio'}</span>${note ? `<span class="tip-goal">${esc(note)}</span>` : ''}`;
   tip.hidden = false;
   const r = cellEl.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
   let leftPx = r.left - wr.left + r.width / 2 - tip.offsetWidth / 2;
