@@ -671,25 +671,51 @@ function dayTable(d) {
 /* ---------- meta diaria: la planta ----------
    Todo lo estudiado en el día (cualquier curso). La planta crece mientras estudias: el tallo sube
    sin parar, sale una hoja cada 1/8 de la meta (30 min en 4 h), un botón en el último tramo y
-   florece al cumplirla. Los días libres no suman ni cortan la racha. */
+   florece al cumplirla. Después, premios hasta 2 h más (lógica en pace.js → Pace.bonus):
+   una flor extra cada 30 min, maceta dorada a +1 h y mariposa a +2 h (tope). Los días libres
+   no suman ni cortan la racha. */
 const DOW_SHORT = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 const DOW_LETTER = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
 const dowOf = k => new Date(k + 'T12:00:00Z').getUTCDay();
-let dailyTick = 0, bloomMem = null;
+const EXTRA_POS = [[20, 21], [40, 19], [18, 31], [42, 29]];
+const BLOOM_KEY = 'bitacora:bloom', RECORD_KEY = 'bitacora:record';
+const flagMem = {};
+let dailyTick = 0;
 
-function bloomedOn(k) { try { return localStorage.getItem('bitacora:bloom') === k; } catch (_) { return bloomMem === k; } }
-function markBloomed(k) { bloomMem = k; try { localStorage.setItem('bitacora:bloom', k); } catch (_) { /* sin almacenamiento */ } }
+// Qué ya se celebró hoy (por dispositivo). Sin almacenamiento, vale en memoria hasta recargar.
+function readFlag(k) { try { const v = localStorage.getItem(k); return v === null ? (flagMem[k] ?? null) : v; } catch (_) { return flagMem[k] ?? null; } }
+function saveFlag(k, v) { flagMem[k] = v; try { localStorage.setItem(k, v); } catch (_) { /* sin almacenamiento */ } }
+/** Nivel ya celebrado hoy: 1 floración, 2 maceta dorada, 3 mariposa ("YYYY-MM-DD" a secas = 1, formato anterior). */
+function celebratedLevel(day) {
+  const v = readFlag(BLOOM_KEY);
+  if (!v) return 0;
+  const [k, l] = v.split('|');
+  return k === day ? Number(l || 1) : 0;
+}
 
 function daysLabel(w) {
   const k = [...w].sort((a, b) => a - b).join(',');
   return k === '1,2,3,4,5' ? 'lun a vie' : k === '1,2,3,4,5,6' ? 'lun a sáb' : k === '0,1,2,3,4,5,6' ? 'todos los días' : w.map(x => DOW_SHORT[x]).join(', ');
 }
 
-/** Planta para un avance p (0–1). viewBox 60×64; las clases pl-* toman los colores del tema. */
-function plantSvg(p, size, extraClass = '') {
+function flowerSvg(x, y, r, cls) {
+  let g = `<g class="${cls}">`;
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3;
+    g += `<circle class="pl-petal" cx="${(x + r * 1.27 * Math.cos(a)).toFixed(2)}" cy="${(y + r * 1.27 * Math.sin(a)).toFixed(2)}" r="${r}"/>`;
+  }
+  return g + `<circle class="pl-core" cx="${x}" cy="${y.toFixed(2)}" r="${(r * 0.78).toFixed(2)}"/></g>`;
+}
+
+/**
+ * Planta para un avance p (0–1). viewBox 60×64; las clases pl-* toman los colores del tema.
+ * opts: cls (clases extra del svg), extra (flores extra 0–4), gold (maceta dorada), butterfly, hideExtra (índice que aparece con animación).
+ */
+function plantSvg(p, size, opts = {}) {
   p = Math.max(0, Math.min(1, p || 0));
-  let g = `<svg class="plant${extraClass}" width="${size}" height="${size}" viewBox="0 0 60 64" aria-hidden="true" focusable="false">`
-    + '<path class="pl-pot" d="M17 48h26l-3 14H20z"/><rect class="pl-rim" x="15" y="44" width="30" height="5" rx="1.5"/>';
+  const gold = opts.gold ? ' gold' : '';
+  let g = `<svg class="plant${opts.cls || ''}" width="${size}" height="${size}" viewBox="0 0 60 64" aria-hidden="true" focusable="false">`
+    + `<g class="pl-potg"><path class="pl-pot${gold}" d="M17 48h26l-3 14H20z"/><rect class="pl-rim${gold}" x="15" y="44" width="30" height="5" rx="1.5"/></g>`;
   if (p === 0) return g + '<ellipse class="pl-seed" cx="30" cy="42.6" rx="2.4" ry="1.6"/></svg>';
   const top = 43 - (5 + 27 * p);
   g += `<path class="pl-stem" d="M30 44 Q${p > 0.5 ? 27.5 : 31.5} ${((44 + top) / 2).toFixed(1)} 30 ${top.toFixed(1)}"/>`;
@@ -700,19 +726,24 @@ function plantSvg(p, size, extraClass = '') {
     g += `<ellipse class="pl-leaf" cx="${x}" cy="${y.toFixed(1)}" rx="5.2" ry="2.3" transform="rotate(${left ? -28 : 28} ${x} ${y.toFixed(1)})"/>`;
   }
   if (p >= 1) {
-    g += '<g class="pl-flower">';
-    for (let i = 0; i < 6; i++) {
-      const a = i * Math.PI / 3;
-      g += `<circle class="pl-petal" cx="${(30 + 4.3 * Math.cos(a)).toFixed(2)}" cy="${(top + 4.3 * Math.sin(a)).toFixed(2)}" r="3.4"/>`;
+    for (let i = 0; i < Math.min(4, opts.extra || 0); i++) {
+      const [x, y] = EXTRA_POS[i];
+      g += `<g class="pl-extra${i === opts.hideExtra ? ' pre-pop' : ''}" data-i="${i}"><line class="pl-twig" x1="30" y1="${y + 4}" x2="${x}" y2="${y}"/>${flowerSvg(x, y, 2.1, 'pl-mini')}</g>`;
     }
-    g += `<circle class="pl-core" cx="30" cy="${top.toFixed(2)}" r="2.6"/></g>`;
+    g += flowerSvg(30, top, 3.4, 'pl-flower');
+    if (opts.butterfly) {
+      g += '<g transform="translate(49 9) rotate(-15)"><g class="pl-fly"><g class="pl-wings">'
+        + '<ellipse class="pl-wing" cx="-3" cy="-2" rx="3.4" ry="2.4"/><ellipse class="pl-wing" cx="3" cy="-2" rx="3.4" ry="2.4"/>'
+        + '<ellipse class="pl-wing2" cx="-2.4" cy="2" rx="2.2" ry="1.6"/><ellipse class="pl-wing2" cx="2.4" cy="2" rx="2.2" ry="1.6"/></g>'
+        + '<line class="pl-body" x1="0" y1="-4" x2="0" y2="4"/></g></g>';
+    }
   } else if (p >= 7 / 8) {
     g += `<ellipse class="pl-petal" cx="30" cy="${(top - 1.6).toFixed(1)}" rx="2.1" ry="3.1"/>`;
   }
   return g + '</svg>';
 }
 
-/** Minutos por día de esta semana (todas las materias, con el cronómetro en marcha hoy) y la racha. */
+/** Minutos por día de esta semana (todas las materias, con el cronómetro en marcha hoy), premios, racha, récord y jardín. */
 function dailyState(d) {
   const goal = d.daily;
   if (!goal || !goal.minutes) return null;
@@ -720,76 +751,131 @@ function dailyState(d) {
   for (const x of d.sessions) { const k = dayKey(new Date(x.start)); byDay[k] = (byDay[k] || 0) + x.minutes; }
   if (d.active) byDay[d.today] = (byDay[d.today] || 0) + activeElapsed(d.active) / 60000;
   const isGoalDay = k => goal.weekdays.includes(dowOf(k));
-  const week = [0, 1, 2, 3, 4, 5, 6].map(i => { const k = addDays(d.weekStart, i); return { k, m: byDay[k] || 0, goalDay: isGoalDay(k) }; });
-  let streak = null;
+  const week = [0, 1, 2, 3, 4, 5, 6].map(i => {
+    const k = addDays(d.weekStart, i), m = byDay[k] || 0;
+    return { k, m, goalDay: isGoalDay(k), bonus: Pace.bonus(m, goal.minutes) };
+  });
+  let streak = null, garden = null;
   const h = H.data;
   if (h && h.days) {
     const from = h.cycleStart > h.from ? h.cycleStart : h.from;
-    streak = Pace.dailyStreak({ days: { ...h.days, ...byDay }, goal: goal.minutes, weekdays: goal.weekdays, from, today: d.today });
+    const days = { ...h.days, ...byDay };
+    streak = Pace.dailyStreak({ days, goal: goal.minutes, weekdays: goal.weekdays, from, today: d.today });
+    garden = Pace.garden({ days, goal: goal.minutes, from, today: d.today });
   }
-  return { goal: goal.minutes, weekdays: goal.weekdays, done: byDay[d.today] || 0, goalDay: isGoalDay(d.today), today: d.today, week, streak, running: !!(d.active && !d.active.pausedAt) };
+  const done = byDay[d.today] || 0;
+  return {
+    goal: goal.minutes, weekdays: goal.weekdays, done, goalDay: isGoalDay(d.today), today: d.today,
+    bonus: Pace.bonus(done, goal.minutes), week, streak, garden, running: !!(d.active && !d.active.pausedAt),
+  };
 }
 
-function dailyHtml(s, bloomPending) {
-  const met = s.done >= s.goal;
-  let main, eta = '';
-  if (met) main = `<b>¡Floreció!</b> ${fmtMin(s.done)} hoy ✓`;
+/** Qué celebrar ahora (una vez por día cada cosa): el nivel nuevo de premios o un récord del ciclo. */
+function pendingKind(s) {
+  const lvl = s.bonus.level, prev = celebratedLevel(s.today);
+  if (lvl > prev) return lvl === 1 ? 'bloom' : lvl === 2 ? 'gold' : 'fly';
+  if (s.garden && s.garden.newRecord && readFlag(RECORD_KEY) !== s.today) return 'record';
+  return null;
+}
+
+function dailyHtml(s, kind, hideExtra) {
+  const b = s.bonus;
+  let main, next = '';
+  if (b.level === 3) main = `<b>¡Día completo!</b> ${fmtMin(s.done)} hoy ✓`;
+  else if (b.level === 2) main = `<b>¡Día de oro!</b> ${fmtMin(s.done)} hoy ✓`;
+  else if (b.level === 1) main = `<b>¡Floreció!</b> ${fmtMin(s.done)} hoy ✓`;
   else if (!s.goalDay) main = `Día libre${s.done >= 1 ? ` · ${fmtMin(s.done)} estudiadas` : ''}`;
   else {
     main = `<b>${fmtMin(s.done)}</b> de ${fmtMin(s.goal)} · faltan ${fmtMin(s.goal - s.done)}`;
     const at = new Date(serverNow() + (s.goal - s.done) * 60000);
-    eta = dayKey(at) !== s.today ? 'Hoy ya no alcanzan las horas para llegar.'
+    next = dayKey(at) !== s.today ? 'Hoy ya no alcanzan las horas para llegar.'
       : `${s.running ? 'Si sigues sin parar' : 'Si empiezas ahora'}, llegas a las <b>${fTime.format(at)}</b>.`;
   }
+  if (b.next) {
+    const what = b.next === s.goal + 120 ? 'la mariposa y la última flor' : b.next === s.goal + 60 ? 'la maceta dorada y otra flor' : 'otra flor';
+    next = `Siguiente premio: ${what} en <b>${fmtMin(Math.max(1, Math.ceil(b.next - s.done)))}</b>.`;
+  } else if (b.level === 3) next = `${b.flowers} flores, maceta dorada y mariposa: llegaste al tope de premios de hoy.`;
+
   const st = s.streak;
   const unit = n => n === 1 ? 'día' : 'días';
   const streak = !st ? ''
-    : st.current ? `Racha: <b>${st.current}</b> ${st.current === 1 ? 'día' : 'días seguidos'} con ${fmtMin(s.goal)}${st.best > st.current ? ` · récord ${st.best}` : ' · tu récord'}`
-    : st.best ? `Racha en 0 · récord ${st.best} ${unit(st.best)}`
+    : st.current ? `Racha: <b>${st.current}</b> ${st.current === 1 ? 'día' : 'días seguidos'} con ${fmtMin(s.goal)}${st.best > st.current ? ` · mejor racha: ${st.best}` : ' · tu mejor racha'}`
+    : st.best ? `Racha en 0 · mejor racha: ${st.best} ${unit(st.best)}`
     : `Aún sin días de ${fmtMin(s.goal)}: hoy puede ser el primero.`;
+
+  const g = s.garden;
+  let counters = '';
+  if (g) {
+    const dm = k => `${DOW_SHORT[dowOf(k)]} ${Number(k.slice(8))}/${Number(k.slice(5, 7))}`;
+    const rec = g.newRecord ? `<b>¡Nuevo récord del ciclo!</b> (antes ${fmtMin(g.prevBest)})`
+      : g.best >= 1 ? `Récord del ciclo: ${fmtMin(g.best)} (${g.bestDay === s.today ? 'hoy' : dm(g.bestDay)})` : '';
+    counters = [rec, `Jardín: <b>${g.flowers}</b> ${g.flowers === 1 ? 'flor' : 'flores'}`].filter(Boolean).join(' · ');
+  }
+
   const pots = s.week.map(w => {
-    const tip = `${DOW_SHORT[dowOf(w.k)]} ${Number(w.k.slice(8))}: ${w.m >= 1 ? fmtMin(w.m) : 'sin estudio'}${w.goalDay ? (w.m >= s.goal ? ' ✓' : '') : ' · día libre'}`;
-    return `<span class="pot${w.k === s.today ? ' today' : ''}${w.goalDay ? '' : ' free'}" title="${esc(tip)}">${plantSvg(w.m / s.goal, 30)}<span>${DOW_LETTER[dowOf(w.k)]}</span></span>`;
+    const wb = w.bonus;
+    const prize = wb.level === 3 ? ' · mariposa' : wb.level === 2 ? ' · maceta dorada' : '';
+    const tip = `${DOW_SHORT[dowOf(w.k)]} ${Number(w.k.slice(8))}: ${w.m >= 1 ? fmtMin(w.m) : 'sin estudio'}`
+      + (wb.flowers ? ` ✓ · ${wb.flowers} ${wb.flowers === 1 ? 'flor' : 'flores'}${prize}` : '') + (w.goalDay ? '' : ' · día libre');
+    return `<span class="pot${w.k === s.today ? ' today' : ''}${w.goalDay ? '' : ' free'}" title="${esc(tip)}">${plantSvg(w.m / s.goal, 30, wb)}<span>${DOW_LETTER[dowOf(w.k)]}</span></span>`;
   }).join('');
-  const aria = 'Semana: ' + s.week.map(w => `${DOW_SHORT[dowOf(w.k)]} ${w.m >= 1 ? fmtMin(w.m) : 'nada'}${w.goalDay ? '' : ' (libre)'}`).join(', ');
+  const aria = 'Semana: ' + s.week.map(w => `${DOW_SHORT[dowOf(w.k)]} ${w.m >= 1 ? fmtMin(w.m) : 'nada'}${w.bonus.flowers ? `, ${w.bonus.flowers} ${w.bonus.flowers === 1 ? 'flor' : 'flores'}` : ''}${w.goalDay ? '' : ' (libre)'}`).join('; ');
+
+  const cls = ' live' + (kind === 'bloom' ? ' pre-bloom' : kind === 'gold' ? ' pre-gold' : kind === 'fly' ? ' pre-fly' : '');
   return `<div class="daily-head"><span class="eyebrow">Meta del día</span><span class="daily-cfg">${fmtMin(s.goal)} · ${esc(daysLabel(s.weekdays))}</span></div>
     <div class="daily-main">
-      <div class="daily-plant">${plantSvg(s.done / s.goal, 104, bloomPending ? ' pre-bloom' : '')}</div>
-      <div class="daily-text"><p class="daily-done${met ? ' met' : ''}">${main}</p>${eta ? `<p class="muted">${eta}</p>` : ''}${streak ? `<p class="muted">${streak}</p>` : ''}</div>
+      <div class="daily-plant">${plantSvg(s.done / s.goal, 104, { cls, extra: b.extra, gold: b.gold, butterfly: b.butterfly, hideExtra })}</div>
+      <div class="daily-text"><p class="daily-done${b.level ? ' met' : ''}${b.level >= 2 ? ' gold' : ''}">${main}</p>${next ? `<p class="muted">${next}</p>` : ''}${streak ? `<p class="muted">${streak}</p>` : ''}${counters ? `<p class="muted">${counters}</p>` : ''}</div>
     </div>
     <div class="daily-week" role="img" aria-label="${esc(aria)}">${pots}</div>`;
 }
 
 /**
- * Dibuja la planta (también cada 30 s con el cronómetro en marcha). Al florecer, la celebra una vez
- * por día. Tras guardar una sesión la tarjeta se redibuja varias veces seguidas (sesión, historial):
- * la animación espera a que pase esa ráfaga, si no se cortaría al instante.
+ * Dibuja la planta (también cada 30 s con el cronómetro en marcha). Celebra cada premio una vez por día
+ * y hace aparecer cada flor extra nueva. Tras guardar una sesión la tarjeta se redibuja varias veces
+ * seguidas (sesión, historial): los efectos esperan a que pase esa ráfaga, si no se cortarían al instante.
  */
-let celebrateTimer = null;
+let effectTimer = null, pendingPop = -1, lastFlowers = { day: null, n: 0 };
 function renderDaily() {
   const el = document.getElementById('daily'), d = S.st.items;
   if (!el || !d) return;
   const s = dailyState(d);
   el.hidden = !s;
   if (!s) return;
-  const pending = s.done >= s.goal && !bloomedOn(s.today);
-  el.innerHTML = dailyHtml(s, pending);
-  if (pending) {
-    clearTimeout(celebrateTimer);
-    celebrateTimer = setTimeout(() => celebrate(s.today), 800);
+  const kind = pendingKind(s);
+  if (!kind && lastFlowers.day === s.today && s.bonus.flowers > lastFlowers.n && s.bonus.extra > 0) pendingPop = s.bonus.extra - 1;
+  if (kind || lastFlowers.day !== s.today || s.bonus.flowers < lastFlowers.n) pendingPop = -1;
+  lastFlowers = { day: s.today, n: s.bonus.flowers };
+  el.innerHTML = dailyHtml(s, kind, pendingPop);
+  if (kind || pendingPop >= 0) {
+    clearTimeout(effectTimer);
+    effectTimer = setTimeout(runDailyEffects, 800);
   }
 }
-function celebrate(day) {
+
+function runDailyEffects() {
+  const d = S.st.items, s = d && dailyState(d);
   const wrap = document.querySelector('#daily .daily-plant'), plant = wrap && wrap.querySelector('.plant');
-  if (!plant) return;
-  markBloomed(day);
-  plant.classList.remove('pre-bloom');
-  plant.classList.add('celebrate');
-  const burst = document.createElement('span');
-  burst.className = 'burst';
-  burst.setAttribute('aria-hidden', 'true');
-  for (let i = 0; i < 10; i++) burst.appendChild(document.createElement('i'));
-  wrap.appendChild(burst);
+  if (!s || !plant) return;
+  const kind = pendingKind(s);
+  if (kind) {
+    if (kind === 'record') saveFlag(RECORD_KEY, s.today);
+    else {
+      saveFlag(BLOOM_KEY, `${s.today}|${s.bonus.level}`);
+      if (s.garden && s.garden.newRecord) saveFlag(RECORD_KEY, s.today); // el récord ya se festeja con el premio
+    }
+    plant.classList.remove('pre-bloom', 'pre-gold', 'pre-fly');
+    plant.classList.add('celebrate-' + kind);
+    const burst = document.createElement('span');
+    burst.className = 'burst' + (kind === 'gold' ? ' gold' : '');
+    burst.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 10; i++) burst.appendChild(document.createElement('i'));
+    wrap.appendChild(burst);
+  } else if (pendingPop >= 0) {
+    const f = plant.querySelector(`.pl-extra[data-i="${pendingPop}"]`);
+    if (f) { f.classList.remove('pre-pop'); f.classList.add('pop'); }
+  }
+  pendingPop = -1;
 }
 
 function renderStudyMore(d) {

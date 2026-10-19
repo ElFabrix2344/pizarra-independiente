@@ -52,5 +52,32 @@
     return { current: run, best, total, todayDone: isGoalDay(today) && (days[today] || 0) >= goal };
   }
 
-  root.Pace = { weekPlan, forecastWeek, pastWeeks, dailyStreak };
+  /** Premios por pasar la meta diaria: cada 30 min extra +1 flor (hasta 4), maceta dorada a +1 h y mariposa a +2 h (tope). */
+  const BONUS_STEP = 30, BONUS_MAX = 4;
+  function bonus(m, goal) {
+    const none = { flowers: 0, extra: 0, gold: false, butterfly: false, level: 0, next: null };
+    if (!goal || !(m >= goal)) return none;
+    const cap = goal + BONUS_STEP * BONUS_MAX;
+    const extra = Math.min(BONUS_MAX, Math.floor((Math.min(m, cap) - goal) / BONUS_STEP + 1e-9));
+    const gold = m >= goal + 2 * BONUS_STEP, butterfly = m >= cap;
+    return { flowers: 1 + extra, extra, gold, butterfly, level: butterfly ? 3 : gold ? 2 : 1, next: butterfly ? null : goal + (extra + 1) * BONUS_STEP };
+  }
+
+  /**
+   * Récord del día y jardín (flores ganadas) desde `from` hasta `today`. `days`: { 'YYYY-MM-DD': minutos }.
+   * prevBest es el mejor día antes de hoy: si hoy lo supera (y había alguno), es récord nuevo.
+   */
+  function garden({ days, goal, from, today }) {
+    let best = 0, bestDay = null, prevBest = 0, prevBestDay = null, flowers = 0;
+    for (const k of Object.keys(days).sort()) {
+      if (k < from || k > today) continue;
+      const m = days[k] || 0;
+      if (m > best) { best = m; bestDay = k; }
+      if (k < today && m > prevBest) { prevBest = m; prevBestDay = k; }
+      flowers += bonus(m, goal).flowers;
+    }
+    return { best, bestDay, prevBest, prevBestDay, flowers, newRecord: prevBest > 0 && (days[today] || 0) > prevBest };
+  }
+
+  root.Pace = { weekPlan, forecastWeek, pastWeeks, dailyStreak, bonus, garden };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -9,6 +9,10 @@ type PaceApi = {
   dailyStreak: (a: { days: Record<string, number>; goal: number; weekdays: number[]; from: string; today: string }) => {
     current: number; best: number; total: number; todayDone: boolean;
   };
+  bonus: (m: number, goal: number) => { flowers: number; extra: number; gold: boolean; butterfly: boolean; level: number; next: number | null };
+  garden: (a: { days: Record<string, number>; goal: number; from: string; today: string }) => {
+    best: number; bestDay: string | null; prevBest: number; prevBestDay: string | null; flowers: number; newRecord: boolean;
+  };
 };
 let Pace: PaceApi;
 
@@ -80,5 +84,24 @@ describe('racha de la meta diaria (4 h, lunes a viernes)', () => {
   });
   it('estudiar el fin de semana no suma a la racha de días de la meta', () => {
     expect(run({ '2026-10-17': 300, '2026-10-19': 0 })).toMatchObject({ current: 2, total: 4 });
+  });
+});
+
+describe('premios al pasar las 4 h (tope 6 h)', () => {
+  it('una flor más cada 30 min, maceta dorada a las 5 h y mariposa a las 6 h', () => {
+    expect(Pace.bonus(239, 240)).toMatchObject({ flowers: 0, level: 0, next: null });
+    expect(Pace.bonus(240, 240)).toEqual({ flowers: 1, extra: 0, gold: false, butterfly: false, level: 1, next: 270 });
+    expect(Pace.bonus(275, 240)).toMatchObject({ flowers: 2, gold: false, next: 300 });
+    expect(Pace.bonus(300, 240)).toMatchObject({ flowers: 3, gold: true, butterfly: false, level: 2, next: 330 });
+    expect(Pace.bonus(360, 240)).toEqual({ flowers: 5, extra: 4, gold: true, butterfly: true, level: 3, next: null });
+    // Después del tope no hay más premios.
+    expect(Pace.bonus(480, 240)).toMatchObject({ flowers: 5, butterfly: true, next: null });
+  });
+  it('récord del ciclo y jardín (flores de todos los días que florecieron, también fines de semana)', () => {
+    const days = { '2026-10-05': 500, '2026-10-12': 250, '2026-10-14': 320, '2026-10-17': 245, '2026-10-19': 330 };
+    const g = Pace.garden({ days, goal: 240, from: '2026-10-10', today: '2026-10-19' });
+    // 10-05 queda antes del inicio. Flores: 250→1, 320→3, 245→1, 330→4 = 9
+    expect(g).toEqual({ best: 330, bestDay: '2026-10-19', prevBest: 320, prevBestDay: '2026-10-14', flowers: 9, newRecord: true });
+    expect(Pace.garden({ days: { '2026-10-19': 100 }, goal: 240, from: '2026-10-10', today: '2026-10-19' }).newRecord).toBe(false);
   });
 });
