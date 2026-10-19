@@ -55,6 +55,7 @@ const study: StudyDigest = {
     '2026-10-18': { EPP: 57 },
   },
   active: null,
+  daily: { minutes: 240, weekdays: [1, 2, 3, 4, 5] },
 };
 
 const ev = (over: Partial<PanelEvaluation>): PanelEvaluation => ({
@@ -101,6 +102,7 @@ describe('contenido de la nota para Claude', () => {
     expect(lines).toContain('Más peso a EPP por la PC3 del jueves; la PC2 de Aplicada es recién el 07/11.');
     expect(lines).toContain('## Esta semana: lun 12/10 – dom 18/10 (hoy domingo; queda 1 día contando hoy)');
     expect(lines).toContain('Total: 11 h 27 · meta 14 h (suma de las metas por curso).');
+    expect(lines).toContain('Meta diaria: 4 h de lunes a viernes (todo lo estudiado en el día). Hoy es día libre.');
     expect(lines).toContain('- Estadística Aplicada: 3 h 08 de 6 h · faltan 2 h 52');
     expect(lines).toContain('- EPP: 8 h 17 de 8 h ✓ cumplida');
     expect(lines).toContain('- HEE: 2 min (sin meta)');
@@ -134,6 +136,14 @@ describe('contenido de la nota para Claude', () => {
     expect(content).toContain('Ninguna registrada en TickTick.');
     expect(content).toContain('En curso ahora: EPP desde las 16:05 (35 min; aún sin guardar).');
     expect(content).not.toContain('## Notas del ciclo');
+  });
+  it('marca los días que cumplieron la meta diaria y lo que falta hoy', () => {
+    const withGoal = { ...study, today: '2026-10-14', days: { ...study.days, '2026-10-14': { EPP: 250 } } };
+    const lines = buildNote(input({ study: withGoal })).content.split('\n');
+    expect(lines).toContain('- mié 14/10 (hoy): 4 h 10 (EPP 4 h 10) ✓ meta diaria');
+    expect(lines).toContain('Meta diaria: 4 h de lunes a viernes (todo lo estudiado en el día). Hoy: 4 h 10 ✓ cumplida.');
+    const pending = { ...study, today: '2026-10-15' };
+    expect(buildNote(input({ study: pending })).content).toContain('Hoy: 3 h 02 · faltan 58 min.');
   });
   it('formato de minutos', () => {
     expect(fmtMinutes(0)).toBe('0 min');

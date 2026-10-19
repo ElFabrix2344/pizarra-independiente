@@ -35,5 +35,22 @@
     return { count: last.length, average: avg, met: goal ? last.filter((v) => v >= goal).length : null };
   }
 
-  root.Pace = { weekPlan, forecastWeek, pastWeeks };
+  /**
+   * Racha de la meta diaria: días seguidos que la cumplen, contando solo los días de la meta
+   * (los libres no suman ni la cortan). Hoy, si aún no se cumple, tampoco la corta: sigue viva
+   * hasta que termine el día. `days`: { 'YYYY-MM-DD': minutos }; se recorre de `from` a `today`.
+   */
+  function dailyStreak({ days, goal, weekdays, from, today }) {
+    const add = (k, n) => { const [y, m, d] = k.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n, 12)).toISOString().slice(0, 10); };
+    const isGoalDay = (k) => weekdays.includes(new Date(k + 'T12:00:00Z').getUTCDay());
+    let run = 0, best = 0, total = 0;
+    for (let k = from; k <= today; k = add(k, 1)) {
+      if (!isGoalDay(k)) continue;
+      if ((days[k] || 0) >= goal) { run++; total++; if (run > best) best = run; }
+      else if (k !== today) run = 0;
+    }
+    return { current: run, best, total, todayDone: isGoalDay(today) && (days[today] || 0) >= goal };
+  }
+
+  root.Pace = { weekPlan, forecastWeek, pastWeeks, dailyStreak };
 })(typeof window !== 'undefined' ? window : globalThis);

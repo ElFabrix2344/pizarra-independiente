@@ -128,6 +128,14 @@ export function fmtMinutes(m: number): string {
 }
 const num = (x: number) => String(Number(x.toFixed(2)));
 
+function weekdaysText(w: number[]): string {
+  const key = [...w].sort((a, b) => a - b).join(',');
+  if (key === '1,2,3,4,5') return 'de lunes a viernes';
+  if (key === '1,2,3,4,5,6') return 'de lunes a sábado';
+  if (key === '0,1,2,3,4,5,6') return 'todos los días';
+  return 'los ' + w.map((x) => DOW_LONG[x]).join(', ');
+}
+
 /** Curso de una tarea: la columna en el inbox, o "lista · columna". */
 function taskCourse(t: PanelEvaluation): string {
   if (t.column && t.projectId.startsWith('inbox')) return t.column;
@@ -175,6 +183,15 @@ export function buildNote(input: NoteInput): { body: string; content: string } {
   const goalTotal = d.courses.reduce((a, c) => a + (c.goalMinutes ?? 0), 0);
   L.push('', `## Esta semana: ${dayLabel(d.weekStart)} – ${dayLabel(d.weekEnd)} (hoy ${DOW_LONG[dow(d.today)]}; ${left === 1 ? 'queda 1 día' : `quedan ${left} días`} contando hoy)`);
   L.push(`Total: ${fmtMinutes(cur.total)}${goalTotal ? ` · meta ${fmtMinutes(goalTotal)} (suma de las metas por curso)` : ''}.`);
+  const dg = d.daily;
+  const dayTotal = (k: string) => Object.values(d.days[k] ?? {}).reduce((a, b) => a + b, 0);
+  const goalDay = (k: string) => !!dg && dg.minutes > 0 && dg.weekdays.includes(dow(k));
+  if (dg && dg.minutes > 0) {
+    const t = dayTotal(d.today);
+    L.push(`Meta diaria: ${fmtMinutes(dg.minutes)} ${weekdaysText(dg.weekdays)} (todo lo estudiado en el día). `
+      + (!goalDay(d.today) ? 'Hoy es día libre.'
+        : t >= dg.minutes ? `Hoy: ${fmtMinutes(t)} ✓ cumplida.` : `Hoy: ${fmtMinutes(t)} · faltan ${fmtMinutes(dg.minutes - t)}.`));
+  }
   for (const c of d.courses) {
     const done = cur.byCourse[c.name] ?? 0;
     if (c.goalMinutes) {
@@ -195,7 +212,8 @@ export function buildNote(input: NoteInput): { body: string; content: string } {
     const day = d.days[k] ?? {};
     const tot = Object.values(day).reduce((a, b) => a + b, 0);
     const label = dayLabel(k) + (k === d.today ? ' (hoy)' : '');
-    L.push(tot ? `- ${label}: ${fmtMinutes(tot)} (${breakdown(day, day[''] ?? 0, order)})` : `- ${label}: sin estudio`);
+    const ok = goalDay(k) && tot >= dg.minutes ? ' ✓ meta diaria' : '';
+    L.push(tot ? `- ${label}: ${fmtMinutes(tot)} (${breakdown(day, day[''] ?? 0, order)})${ok}` : `- ${label}: sin estudio`);
   }
 
   // Semanas anteriores (desde la primera con registros)

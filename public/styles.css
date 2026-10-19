@@ -296,6 +296,54 @@ section.study{display:flex;flex-direction:column;gap:12px;min-width:0}
 .perday-tbl .zero{color:var(--muted);opacity:.5}
 .perday-tbl tr.tot th,.perday-tbl tr.tot td{border-bottom:0;font-weight:700}
 .perday-tbl tr.tot td .zero{font-weight:400}
+
+/* ---------- meta diaria: la planta ---------- */
+:root{--leaf:#4E8A34;--petal:#C8457A;--core:#D99A1E;--pot:#C9A88A;--rim:#B39377;--seed:#8C7B67}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--leaf:#7DBE55;--petal:#EB8DB2;--core:#F0B44C;--pot:#7A6352;--rim:#8A7160;--seed:#A89584}}
+:root[data-theme="dark"]{--leaf:#7DBE55;--petal:#EB8DB2;--core:#F0B44C;--pot:#7A6352;--rim:#8A7160;--seed:#A89584}
+/* Con el cronómetro corriendo la tarjeta se invierte (oscura en claro, clara en oscuro): la planta también. */
+.timer.running:not(.paused) .daily{--leaf:#7DBE55;--petal:#EB8DB2;--core:#F0B44C;--pot:#7A6352;--rim:#8A7160;--seed:#A89584}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .timer.running:not(.paused) .daily{--leaf:#4E8A34;--petal:#C8457A;--core:#D99A1E;--pot:#C9A88A;--rim:#B39377;--seed:#8C7B67}}
+:root[data-theme="dark"] .timer.running:not(.paused) .daily{--leaf:#4E8A34;--petal:#C8457A;--core:#D99A1E;--pot:#C9A88A;--rim:#B39377;--seed:#8C7B67}
+.plant{display:block;overflow:visible}
+.plant .pl-pot{fill:var(--pot)} .plant .pl-rim{fill:var(--rim)} .plant .pl-seed{fill:var(--seed)}
+.plant .pl-stem{fill:none;stroke:var(--leaf);stroke-width:2.2;stroke-linecap:round}
+.plant .pl-leaf{fill:var(--leaf)} .plant .pl-petal{fill:var(--petal)} .plant .pl-core{fill:var(--core)}
+.daily{border-top:1px solid var(--hair);padding-top:12px;margin-top:2px;display:flex;flex-direction:column;gap:10px}
+.timer.running:not(.paused) .daily{border-top-color:var(--hero-rule)}
+.timer.running:not(.paused) .daily .eyebrow{color:var(--hero-muted)}
+.daily-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.daily-cfg{font-size:.82rem;color:var(--muted)}
+.timer.running:not(.paused) .daily-cfg{color:var(--hero-muted)}
+.daily-main{display:flex;align-items:center;gap:14px}
+.daily-plant{position:relative;flex:none;width:104px;height:104px}
+.daily-text{display:flex;flex-direction:column;gap:4px;min-width:0}
+.daily-text p{margin:0}
+.daily-text .muted{font-size:.88rem}
+.daily-done{font-size:1rem}
+.daily-done b{font-family:var(--f-display);font-size:1.4rem;letter-spacing:-.01em}
+.daily-done.met{color:var(--ok);font-weight:600}
+.timer.running:not(.paused) .daily-done.met{color:var(--live)}
+.daily-week{display:flex;justify-content:space-between;gap:4px;max-width:330px}
+.pot{display:flex;flex-direction:column;align-items:center;gap:1px;font-size:.72rem;color:var(--muted);line-height:1.1}
+.pot.today{color:var(--ink);font-weight:700}
+.pot.free{opacity:.45}
+.timer.running:not(.paused) .pot{color:var(--hero-muted)}
+.timer.running:not(.paused) .pot.today{color:var(--hero-ink)}
+/* Celebración al florecer (una vez por día) */
+.plant .pl-flower{transform-box:fill-box;transform-origin:center}
+.plant.pre-bloom .pl-flower{opacity:0}
+.plant.celebrate .pl-flower{animation:bloom 1s cubic-bezier(.2,1.5,.4,1) both}
+@keyframes bloom{from{transform:scale(.1) rotate(-60deg);opacity:0}to{transform:scale(1) rotate(0);opacity:1}}
+.burst{position:absolute;left:50%;top:17%;width:0;height:0;pointer-events:none}
+.burst i{position:absolute;left:-4px;top:-4px;width:8px;height:8px;border-radius:50% 0 50% 50%;background:var(--petal);opacity:0;animation:petal 1.7s ease-out .5s forwards}
+.burst i:nth-child(3n){background:var(--leaf)} .burst i:nth-child(5n){background:var(--core)}
+.burst i:nth-child(1){--dx:-52px;--dy:-30px} .burst i:nth-child(2){--dx:48px;--dy:-34px} .burst i:nth-child(3){--dx:-30px;--dy:-58px}
+.burst i:nth-child(4){--dx:26px;--dy:-60px} .burst i:nth-child(5){--dx:-62px;--dy:4px} .burst i:nth-child(6){--dx:60px;--dy:0}
+.burst i:nth-child(7){--dx:-6px;--dy:-68px} .burst i:nth-child(8){--dx:-40px;--dy:26px} .burst i:nth-child(9){--dx:42px;--dy:28px} .burst i:nth-child(10){--dx:10px;--dy:-44px}
+@keyframes petal{0%{opacity:1;transform:translate(0,0) rotate(0) scale(1)}100%{opacity:0;transform:translate(var(--dx),var(--dy)) rotate(220deg) scale(.5)}}
+@media (prefers-reduced-motion: reduce){.plant.celebrate .pl-flower{animation:none}.burst{display:none}}
+#study-more h3.sub-h{font-size:.95rem;margin:6px 0 0}
 .study-more{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:0 18px}
 .study-more > summary{cursor:pointer;padding:12px 0;font-weight:600;color:var(--muted);list-style-position:inside}
 .study-more > summary:hover{color:var(--ink)}

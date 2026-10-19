@@ -500,12 +500,12 @@ function renderStudy() {
       <div class="t-actions">${paused
         ? `<button type="button" data-study-resume${studyBusy ? ' disabled' : ''}>▶ Reanudar</button>`
         : `<button type="button" data-study-pause${studyBusy ? ' disabled' : ''}>❚❚ Pausar</button>`}<button type="button" class="${paused ? '' : 'ghost'}" data-study-stop${studyBusy ? ' disabled' : ''}>■ Parar y guardar</button><button type="button" class="ghost${isArmed ? ' armed' : ''}" data-study-cancel${studyBusy ? ' disabled' : ''}>${isArmed ? '¿Descartar? Toca otra vez' : 'Descartar'}</button></div>
-      ${msg}</div>`;
+      ${msg}<div class="daily" id="daily"></div></div>`;
   } else {
     t = `<div class="timer"><span class="eyebrow">Empezar a estudiar</span>
       <div class="course-btns">${d.courses.map(c => `<button type="button" data-study-start="${esc(c.name)}"${studyBusy ? ' disabled' : ''}>▶ ${esc(c.name)}</button>`).join('')}<button type="button" data-study-start="General"${studyBusy ? ' disabled' : ''}>▶ General</button></div>
       <span class="muted">El tiempo se guarda en TickTick al parar. También cuenta lo que cronometres desde la app de TickTick sobre una tarea del curso.</span>
-      ${msg}</div>`;
+      ${msg}<div class="daily" id="daily"></div></div>`;
   }
 
   // Metas (con ritmo necesario y pronóstico)
@@ -525,6 +525,7 @@ function renderStudy() {
   if (!d.courses.some(c => c.goalMinutes)) g += '<p class="hint">Pon una meta semanal por curso en «metas», aquí abajo.</p>';
   g += dayTable(d) + '</div>';
   main.innerHTML = t + g;
+  renderDaily();
 
   // Panel desplegable: solo se redibuja con datos nuevos y si no lo estás editando.
   const more = $('study-more');
@@ -667,6 +668,130 @@ function dayTable(d) {
   return out + '</tbody></table></div></div>';
 }
 
+/* ---------- meta diaria: la planta ----------
+   Todo lo estudiado en el día (cualquier curso). La planta crece mientras estudias: el tallo sube
+   sin parar, sale una hoja cada 1/8 de la meta (30 min en 4 h), un botón en el último tramo y
+   florece al cumplirla. Los días libres no suman ni cortan la racha. */
+const DOW_SHORT = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+const DOW_LETTER = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+const dowOf = k => new Date(k + 'T12:00:00Z').getUTCDay();
+let dailyTick = 0, bloomMem = null;
+
+function bloomedOn(k) { try { return localStorage.getItem('bitacora:bloom') === k; } catch (_) { return bloomMem === k; } }
+function markBloomed(k) { bloomMem = k; try { localStorage.setItem('bitacora:bloom', k); } catch (_) { /* sin almacenamiento */ } }
+
+function daysLabel(w) {
+  const k = [...w].sort((a, b) => a - b).join(',');
+  return k === '1,2,3,4,5' ? 'lun a vie' : k === '1,2,3,4,5,6' ? 'lun a sáb' : k === '0,1,2,3,4,5,6' ? 'todos los días' : w.map(x => DOW_SHORT[x]).join(', ');
+}
+
+/** Planta para un avance p (0–1). viewBox 60×64; las clases pl-* toman los colores del tema. */
+function plantSvg(p, size, extraClass = '') {
+  p = Math.max(0, Math.min(1, p || 0));
+  let g = `<svg class="plant${extraClass}" width="${size}" height="${size}" viewBox="0 0 60 64" aria-hidden="true" focusable="false">`
+    + '<path class="pl-pot" d="M17 48h26l-3 14H20z"/><rect class="pl-rim" x="15" y="44" width="30" height="5" rx="1.5"/>';
+  if (p === 0) return g + '<ellipse class="pl-seed" cx="30" cy="42.6" rx="2.4" ry="1.6"/></svg>';
+  const top = 43 - (5 + 27 * p);
+  g += `<path class="pl-stem" d="M30 44 Q${p > 0.5 ? 27.5 : 31.5} ${((44 + top) / 2).toFixed(1)} 30 ${top.toFixed(1)}"/>`;
+  const leaves = Math.min(8, Math.floor(p * 8 + 1e-9));
+  for (let i = 0; i < leaves; i++) {
+    const y = 40 - i * 3.3, left = i % 2 === 0, x = left ? 25 : 35;
+    if (y < top + 2) break;
+    g += `<ellipse class="pl-leaf" cx="${x}" cy="${y.toFixed(1)}" rx="5.2" ry="2.3" transform="rotate(${left ? -28 : 28} ${x} ${y.toFixed(1)})"/>`;
+  }
+  if (p >= 1) {
+    g += '<g class="pl-flower">';
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3;
+      g += `<circle class="pl-petal" cx="${(30 + 4.3 * Math.cos(a)).toFixed(2)}" cy="${(top + 4.3 * Math.sin(a)).toFixed(2)}" r="3.4"/>`;
+    }
+    g += `<circle class="pl-core" cx="30" cy="${top.toFixed(2)}" r="2.6"/></g>`;
+  } else if (p >= 7 / 8) {
+    g += `<ellipse class="pl-petal" cx="30" cy="${(top - 1.6).toFixed(1)}" rx="2.1" ry="3.1"/>`;
+  }
+  return g + '</svg>';
+}
+
+/** Minutos por día de esta semana (todas las materias, con el cronómetro en marcha hoy) y la racha. */
+function dailyState(d) {
+  const goal = d.daily;
+  if (!goal || !goal.minutes) return null;
+  const byDay = {};
+  for (const x of d.sessions) { const k = dayKey(new Date(x.start)); byDay[k] = (byDay[k] || 0) + x.minutes; }
+  if (d.active) byDay[d.today] = (byDay[d.today] || 0) + activeElapsed(d.active) / 60000;
+  const isGoalDay = k => goal.weekdays.includes(dowOf(k));
+  const week = [0, 1, 2, 3, 4, 5, 6].map(i => { const k = addDays(d.weekStart, i); return { k, m: byDay[k] || 0, goalDay: isGoalDay(k) }; });
+  let streak = null;
+  const h = H.data;
+  if (h && h.days) {
+    const from = h.cycleStart > h.from ? h.cycleStart : h.from;
+    streak = Pace.dailyStreak({ days: { ...h.days, ...byDay }, goal: goal.minutes, weekdays: goal.weekdays, from, today: d.today });
+  }
+  return { goal: goal.minutes, weekdays: goal.weekdays, done: byDay[d.today] || 0, goalDay: isGoalDay(d.today), today: d.today, week, streak, running: !!(d.active && !d.active.pausedAt) };
+}
+
+function dailyHtml(s, bloomPending) {
+  const met = s.done >= s.goal;
+  let main, eta = '';
+  if (met) main = `<b>¡Floreció!</b> ${fmtMin(s.done)} hoy ✓`;
+  else if (!s.goalDay) main = `Día libre${s.done >= 1 ? ` · ${fmtMin(s.done)} estudiadas` : ''}`;
+  else {
+    main = `<b>${fmtMin(s.done)}</b> de ${fmtMin(s.goal)} · faltan ${fmtMin(s.goal - s.done)}`;
+    const at = new Date(serverNow() + (s.goal - s.done) * 60000);
+    eta = dayKey(at) !== s.today ? 'Hoy ya no alcanzan las horas para llegar.'
+      : `${s.running ? 'Si sigues sin parar' : 'Si empiezas ahora'}, llegas a las <b>${fTime.format(at)}</b>.`;
+  }
+  const st = s.streak;
+  const unit = n => n === 1 ? 'día' : 'días';
+  const streak = !st ? ''
+    : st.current ? `Racha: <b>${st.current}</b> ${st.current === 1 ? 'día' : 'días seguidos'} con ${fmtMin(s.goal)}${st.best > st.current ? ` · récord ${st.best}` : ' · tu récord'}`
+    : st.best ? `Racha en 0 · récord ${st.best} ${unit(st.best)}`
+    : `Aún sin días de ${fmtMin(s.goal)}: hoy puede ser el primero.`;
+  const pots = s.week.map(w => {
+    const tip = `${DOW_SHORT[dowOf(w.k)]} ${Number(w.k.slice(8))}: ${w.m >= 1 ? fmtMin(w.m) : 'sin estudio'}${w.goalDay ? (w.m >= s.goal ? ' ✓' : '') : ' · día libre'}`;
+    return `<span class="pot${w.k === s.today ? ' today' : ''}${w.goalDay ? '' : ' free'}" title="${esc(tip)}">${plantSvg(w.m / s.goal, 30)}<span>${DOW_LETTER[dowOf(w.k)]}</span></span>`;
+  }).join('');
+  const aria = 'Semana: ' + s.week.map(w => `${DOW_SHORT[dowOf(w.k)]} ${w.m >= 1 ? fmtMin(w.m) : 'nada'}${w.goalDay ? '' : ' (libre)'}`).join(', ');
+  return `<div class="daily-head"><span class="eyebrow">Meta del día</span><span class="daily-cfg">${fmtMin(s.goal)} · ${esc(daysLabel(s.weekdays))}</span></div>
+    <div class="daily-main">
+      <div class="daily-plant">${plantSvg(s.done / s.goal, 104, bloomPending ? ' pre-bloom' : '')}</div>
+      <div class="daily-text"><p class="daily-done${met ? ' met' : ''}">${main}</p>${eta ? `<p class="muted">${eta}</p>` : ''}${streak ? `<p class="muted">${streak}</p>` : ''}</div>
+    </div>
+    <div class="daily-week" role="img" aria-label="${esc(aria)}">${pots}</div>`;
+}
+
+/**
+ * Dibuja la planta (también cada 30 s con el cronómetro en marcha). Al florecer, la celebra una vez
+ * por día. Tras guardar una sesión la tarjeta se redibuja varias veces seguidas (sesión, historial):
+ * la animación espera a que pase esa ráfaga, si no se cortaría al instante.
+ */
+let celebrateTimer = null;
+function renderDaily() {
+  const el = document.getElementById('daily'), d = S.st.items;
+  if (!el || !d) return;
+  const s = dailyState(d);
+  el.hidden = !s;
+  if (!s) return;
+  const pending = s.done >= s.goal && !bloomedOn(s.today);
+  el.innerHTML = dailyHtml(s, pending);
+  if (pending) {
+    clearTimeout(celebrateTimer);
+    celebrateTimer = setTimeout(() => celebrate(s.today), 800);
+  }
+}
+function celebrate(day) {
+  const wrap = document.querySelector('#daily .daily-plant'), plant = wrap && wrap.querySelector('.plant');
+  if (!plant) return;
+  markBloomed(day);
+  plant.classList.remove('pre-bloom');
+  plant.classList.add('celebrate');
+  const burst = document.createElement('span');
+  burst.className = 'burst';
+  burst.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < 10; i++) burst.appendChild(document.createElement('i'));
+  wrap.appendChild(burst);
+}
+
 function renderStudyMore(d) {
   const opts = d.courses.map(c => `<option>${esc(c.name)}</option>`).join('') + '<option>General</option>';
   const manual = `<form class="sform" data-study-form="manual"><h3>Agregar sesión</h3>
@@ -674,8 +799,16 @@ function renderStudyMore(d) {
     <label>Duración<span class="row"><input name="h" type="number" min="0" max="12" value="1" inputmode="numeric" aria-label="Horas"> h <input name="m" type="number" min="0" max="59" step="5" value="0" inputmode="numeric" aria-label="Minutos"> min</span></label>
     <label>Día<input name="date" type="date" value="${d.today}" max="${d.today}"></label>
     <button type="submit">Guardar sesión</button></form>`;
+  const dg = d.daily || { minutes: 0, weekdays: [1, 2, 3, 4, 5] };
+  const dKey = dg.weekdays.join(',');
+  const dOpts = [['1,2,3,4,5', 'Lunes a viernes'], ['1,2,3,4,5,6', 'Lunes a sábado'], ['0,1,2,3,4,5,6', 'Todos los días']];
+  if (!dOpts.some(([v]) => v === dKey)) dOpts.push([dKey, daysLabel(dg.weekdays)]);
   const goals = `<form class="sform" data-study-form="goals"><h3>Metas semanales</h3>
     ${d.courses.map(c => `<label class="goal-row">${esc(c.name)}<span class="row"><input type="number" min="0" max="80" step="0.5" data-goal="${esc(c.name)}" value="${c.goalMinutes ? +(c.goalMinutes / 60).toFixed(2) : ''}" placeholder="0" aria-label="Horas por semana para ${esc(c.name)}"> h</span></label>`).join('')}
+    <h3 class="sub-h">Meta diaria</h3>
+    <p class="hint">Todo lo que estudies en el día, de cualquier curso. La planta florece al cumplirla; los días libres no cortan la racha. 0 = sin meta diaria.</p>
+    <label class="goal-row">Horas por día<span class="row"><input type="number" name="dailyHours" min="0" max="16" step="0.5" value="${dg.minutes ? +(dg.minutes / 60).toFixed(2) : 0}" aria-label="Horas por día"> h</span></label>
+    <label class="goal-row">Días que cuentan<select name="dailyDays">${dOpts.map(([v, l]) => `<option value="${v}"${v === dKey ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
     <button type="submit">Guardar metas</button></form>`;
   const list = d.sessions.length
     ? '<ul class="sessions">' + d.sessions.map(x => {
@@ -804,8 +937,9 @@ document.addEventListener('submit', ev => {
   } else {
     const goals = {};
     f.querySelectorAll('[data-goal]').forEach(i => { const h = Number(i.value); if (h > 0) goals[i.dataset.goal] = Math.round(h * 60); });
+    const daily = { minutes: Math.round((Number(f.dailyHours.value) || 0) * 60), weekdays: f.dailyDays.value.split(',').map(Number) };
     moreRenderedAt = null;
-    studyAction('/api/study/goals', 'PUT', { goals });
+    studyAction('/api/study/goals', 'PUT', { goals, daily });
   }
 });
 document.addEventListener('input', ev => { if (ev.target.closest('#study-more')) moreDirty = true; });
@@ -814,6 +948,8 @@ document.addEventListener('input', ev => { if (ev.target.closest('#study-more'))
 setInterval(() => {
   const el = document.getElementById('study-clock'), a = S.st.items && S.st.items.active;
   if (el && a && !a.pausedAt) el.textContent = clock(activeElapsed(a));
+  // La planta crece en vivo mientras corre el cronómetro.
+  if (a && !a.pausedAt && ++dailyTick % 30 === 0) renderDaily();
 }, 1000);
 
 /* ---------- historial del ciclo ---------- */

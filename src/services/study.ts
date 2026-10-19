@@ -58,6 +58,31 @@ export interface StudySettings {
   extra: string[];
   /** Inicio del ciclo ("YYYY-MM-DD") para el historial. */
   cycleStart?: string;
+  /** Meta diaria (todo lo estudiado en el día). Sin guardar: DEFAULT_DAILY. */
+  daily?: DailyGoal;
+}
+
+export interface DailyGoal {
+  /** Minutos por día; 0 = sin meta diaria. */
+  minutes: number;
+  /** Días en que cuenta (0 = domingo … 6 = sábado); los demás son libres y no cortan la racha. */
+  weekdays: number[];
+}
+
+/** Lo que eligió el usuario (19 oct 2026): 4 h de lunes a viernes. */
+export const DEFAULT_DAILY: DailyGoal = { minutes: 240, weekdays: [1, 2, 3, 4, 5] };
+export const dailyGoal = (s: StudySettings): DailyGoal => s.daily ?? DEFAULT_DAILY;
+
+export function validDaily(raw: unknown): DailyGoal {
+  if (!raw || typeof raw !== 'object') throw new ApiError('bad_request', 400, 'Meta diaria inválida.');
+  const r = raw as Record<string, unknown>;
+  const minutes = Number(r.minutes);
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 16 * 60) throw new ApiError('bad_request', 400, 'La meta diaria debe estar entre 0 y 16 h.');
+  const weekdays = [...new Set((Array.isArray(r.weekdays) ? r.weekdays : []).map(Number))]
+    .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+    .sort((a, b) => a - b);
+  if (minutes > 0 && !weekdays.length) throw new ApiError('bad_request', 400, 'Elige al menos un día para la meta diaria.');
+  return { minutes: Math.round(minutes), weekdays };
 }
 
 /** Cursos visibles: columnas de TickTick no ocultas + los agregados a mano. */
@@ -84,7 +109,13 @@ export class StudyStore {
   }
   async getSettings(): Promise<StudySettings> {
     const s = await this.kv.get<StudySettings>(K_SETTINGS, 'json');
-    return { goals: s?.goals ?? {}, hidden: s?.hidden ?? [], extra: s?.extra ?? [], ...(s?.cycleStart ? { cycleStart: s.cycleStart } : {}) };
+    return {
+      goals: s?.goals ?? {},
+      hidden: s?.hidden ?? [],
+      extra: s?.extra ?? [],
+      ...(s?.cycleStart ? { cycleStart: s.cycleStart } : {}),
+      ...(s?.daily ? { daily: s.daily } : {}),
+    };
   }
   setSettings(s: StudySettings) {
     return this.kv.put(K_SETTINGS, JSON.stringify(s));
@@ -247,6 +278,8 @@ export interface StudyResult {
   cycleStart: string;
   /** Todos los cursos posibles, para la configuración (columnas + agregados). */
   courseOptions: Array<{ name: string; source: 'ticktick' | 'extra'; visible: boolean }>;
+  /** Meta diaria vigente (la planta). */
+  daily: DailyGoal;
 }
 
 /** Ventana máxima de GET /focus (el servidor recorta a 30 días). */
@@ -347,6 +380,7 @@ export async function getStudy(
       ...cat.courses.map((name) => ({ name, source: 'ticktick' as const, visible: visible.includes(name) })),
       ...settings.extra.map((name) => ({ name, source: 'extra' as const, visible: true })),
     ],
+    daily: dailyGoal(settings),
   };
 }
 
@@ -497,6 +531,7 @@ export interface StudyDigest {
   /** Semana actual: minutos por día y curso ('' = otros / sin curso visible). */
   days: Record<string, Record<string, number>>;
   active: ActiveTimer | null;
+  daily: DailyGoal;
 }
 
 /**
@@ -550,6 +585,7 @@ export async function getStudyDigest(
     weeks,
     days,
     active,
+    daily: dailyGoal(settings),
   };
 }
 
@@ -655,8 +691,9 @@ export async function addManual(
   return { saved: true, id: focus?.id ?? null, course, minutes: Math.round(minutes), date };
 }
 
-export async function saveGoals(client: TickTickClient, store: StudyStore, goals: unknown) {
+export async function saveGoals(client: TickTickClient, store: StudyStore, goals: unknown, dailyRaw?: unknown) {
   if (!goals || typeof goals !== 'object') throw new ApiError('bad_request', 400, 'Metas inválidas.');
+  const daily = dailyRaw === undefined ? undefined : validDaily(dailyRaw);
   const settings = await store.getSettings();
   const courses = visibleCourses(await loadCourses(client), settings);
   const clean: Record<string, number> = {};
@@ -666,8 +703,9 @@ export async function saveGoals(client: TickTickClient, store: StudyStore, goals
     if (!name || !Number.isFinite(n) || n <= 0) continue;
     clean[name] = Math.min(Math.round(n), 80 * 60);
   }
-  await store.setSettings({ ...settings, goals: clean });
-  return { goals: clean };
+  const next = { ...settings, goals: clean, ...(daily ? { daily } : {}) };
+  await store.setSettings(next);
+  return { goals: clean, daily: dailyGoal(next) };
 }
 
 /** Qué columnas ocultar y qué cursos extra agregar. Las metas de cursos que dejan de verse se conservan. */

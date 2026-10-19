@@ -163,6 +163,22 @@ describe('cursos visibles', () => {
     const r = await saveGoals(client(), store, { HEE: 240, EPP: 60 });
     expect(r.goals).toEqual({ HEE: 240 });
   });
+  it('meta diaria: 4 h de lunes a viernes por defecto; se guarda con las metas y no se pierde al cambiar otras cosas', async () => {
+    const { saveCourses, saveCycleStart, DEFAULT_DAILY } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    const now = new Date();
+    expect((await getStudy(client(), store, { now, timeZone: TZ })).daily).toEqual(DEFAULT_DAILY);
+    expect(DEFAULT_DAILY).toEqual({ minutes: 240, weekdays: [1, 2, 3, 4, 5] });
+    const r = await saveGoals(client(), store, { HEE: 300 }, { minutes: 180.4, weekdays: [6, 1, 1, 2, 9] });
+    expect(r.daily).toEqual({ minutes: 180, weekdays: [1, 2, 6] });
+    await saveCourses(client(), store, { hidden: ['EPP'] });
+    await saveCycleStart(store, weekRange(now, TZ).monday, { now, timeZone: TZ });
+    await saveGoals(client(), store, { HEE: 120 }); // sin `daily`: se conserva la guardada
+    expect((await getStudy(client(), store, { now, timeZone: TZ })).daily).toEqual({ minutes: 180, weekdays: [1, 2, 6] });
+    await expect(saveGoals(client(), store, {}, { minutes: 240, weekdays: [] })).rejects.toMatchObject({ status: 400 });
+    await expect(saveGoals(client(), store, {}, { minutes: 17 * 60, weekdays: [1] })).rejects.toMatchObject({ status: 400 });
+    expect((await saveGoals(client(), store, {}, { minutes: 0, weekdays: [] })).daily).toEqual({ minutes: 0, weekdays: [] });
+  });
 });
 
 describe('historial del ciclo', () => {

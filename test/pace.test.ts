@@ -6,6 +6,9 @@ type PaceApi = {
   };
   forecastWeek: (a: { perDay: number | null; doneWeek: number; doneToday: number; daysLeft: number }) => number | null;
   pastWeeks: (values: number[], goal: number, n?: number) => null | { count: number; average: number; met: number | null };
+  dailyStreak: (a: { days: Record<string, number>; goal: number; weekdays: number[]; from: string; today: string }) => {
+    current: number; best: number; total: number; todayDone: boolean;
+  };
 };
 let Pace: PaceApi;
 
@@ -56,5 +59,26 @@ describe('pronóstico con tu ritmo real', () => {
   it('últimas semanas: promedio y cuántas cumplen la meta', () => {
     expect(Pace.pastWeeks([300, 900, 1000, 500, 700], 960)).toEqual({ count: 4, average: 775, met: 1 });
     expect(Pace.pastWeeks([], 960)).toBeNull();
+  });
+});
+
+describe('racha de la meta diaria (4 h, lunes a viernes)', () => {
+  const L_V = [1, 2, 3, 4, 5];
+  // lun 12 ✓, mar 13 ✓, mié 14 ✗, jue 15 ✓, vie 16 ✓, sáb y dom libres, lun 19 = hoy
+  const week = { '2026-10-12': 250, '2026-10-13': 240, '2026-10-14': 100, '2026-10-15': 300, '2026-10-16': 260 };
+  const run = (today: Record<string, number>, from = '2026-10-12') =>
+    Pace.dailyStreak({ days: { ...week, ...today }, goal: 240, weekdays: L_V, from, today: '2026-10-19' });
+
+  it('el fin de semana no corta la racha y hoy, sin cumplir aún, tampoco', () => {
+    expect(run({ '2026-10-19': 50 })).toEqual({ current: 2, best: 2, total: 4, todayDone: false });
+  });
+  it('al cumplir hoy, suma', () => {
+    expect(run({ '2026-10-19': 245 })).toEqual({ current: 3, best: 3, total: 5, todayDone: true });
+  });
+  it('un día de la meta sin cumplir sí la corta', () => {
+    expect(run({ '2026-10-16': 100, '2026-10-19': 0 })).toMatchObject({ current: 0, best: 2, total: 3 });
+  });
+  it('estudiar el fin de semana no suma a la racha de días de la meta', () => {
+    expect(run({ '2026-10-17': 300, '2026-10-19': 0 })).toMatchObject({ current: 2, total: 4 });
   });
 });
