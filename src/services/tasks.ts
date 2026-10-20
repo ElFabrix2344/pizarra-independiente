@@ -68,50 +68,75 @@ interface Meta {
   projects: Map<string, TickTickProject>;
   columns: Map<string, string>; // columnId → nombre
   loadedAt: number;
-  columnProjects: Set<string>;
+  /** Lectura de columnas por proyecto (en curso o hecha): las peticiones simultáneas esperan la misma. */
+  columnLoads: Map<string, Promise<void>>;
 }
 const META_TTL_MS = 10 * 60 * 1000;
 let metaCache: Meta | null = null;
+let metaLoading: Promise<Meta> | null = null;
 
 /** Solo para tests. */
 export function _resetMetaCache() {
   metaCache = null;
+  metaLoading = null;
 }
 
-async function loadMeta(client: TickTickClient, now: number): Promise<Meta> {
-  if (metaCache && now - metaCache.loadedAt < META_TTL_MS) return metaCache;
-  const projects = await client.listProjects();
-  metaCache = {
-    projects: new Map(projects.map((p) => [p.id, p])),
-    columns: metaCache?.columns ?? new Map(),
-    columnProjects: metaCache?.columnProjects ?? new Set(),
-    loadedAt: now,
-  };
-  return metaCache;
+/** Proyectos (y columnas ya conocidas). Las peticiones simultáneas comparten la misma carga. */
+function loadMeta(client: TickTickClient, now: number): Promise<Meta> {
+  if (metaCache && now - metaCache.loadedAt < META_TTL_MS) return Promise.resolve(metaCache);
+  metaLoading ??= client
+    .listProjects()
+    .then((projects) => {
+      metaCache = {
+        projects: new Map(projects.map((p) => [p.id, p])),
+        // Los nombres conocidos se conservan; las lecturas se rehacen (con el TTL) si aparece una columna nueva.
+        columns: metaCache?.columns ?? new Map(),
+        columnLoads: new Map(),
+        loadedAt: now,
+      };
+      return metaCache;
+    })
+    .finally(() => {
+      metaLoading = null;
+    });
+  return metaLoading;
 }
 
-/** Carga columnas de los proyectos kanban que tengan tareas con columnId desconocido. */
+/**
+ * Carga las columnas de los proyectos con tareas de columnId desconocido. Antes, la segunda
+ * petición simultánea (p. ej. /api/evaluations mientras /api/tasks leía) seguía sin esperar y sus
+ * tareas salían sin columna, o sea sin curso; y un fallo quedaba guardado hasta reciclar el isolate.
+ */
 async function ensureColumns(client: TickTickClient, meta: Meta, tasks: TickTickTask[]) {
   const missing = new Set<string>();
-  for (const t of tasks) {
-    if (t.columnId && !meta.columns.has(t.columnId) && !meta.columnProjects.has(t.projectId)) missing.add(t.projectId);
-  }
+  for (const t of tasks) if (t.columnId && !meta.columns.has(t.columnId)) missing.add(t.projectId);
   await Promise.all(
-    [...missing].map(async (pid) => {
-      meta.columnProjects.add(pid);
-      try {
-        for (const c of await client.listColumns(pid)) meta.columns.set(c.id, c.name);
-      } catch (e) {
-        console.warn('No se pudieron leer columnas de', pid, (e as Error).message);
+    [...missing].map((pid) => {
+      let load = meta.columnLoads.get(pid);
+      if (!load) {
+        load = readColumns(client, pid).then(
+          (cols) => addColumns(meta, cols),
+          (e) => {
+            meta.columnLoads.delete(pid); // la próxima petición reintenta
+            console.warn('No se pudieron leer columnas de', pid, (e as Error).message);
+          },
+        );
+        meta.columnLoads.set(pid, load);
       }
+      return load;
     }),
   );
 }
 
-function addColumns(meta: Meta, cols: TickTickColumn[] | undefined, projectId: string) {
-  if (!cols) return;
-  meta.columnProjects.add(projectId);
-  for (const c of cols) meta.columns.set(c.id, c.name);
+/** El inbox se pide por su alias, como en Estudio; si no trae columnas, /project/inbox/data también las tiene. */
+async function readColumns(client: TickTickClient, pid: string): Promise<TickTickColumn[]> {
+  if (!pid.startsWith('inbox')) return client.listColumns(pid);
+  const cols = await client.listColumns('inbox').catch(() => [] as TickTickColumn[]);
+  return cols.length ? cols : ((await client.getProjectData('inbox')).columns ?? []);
+}
+
+function addColumns(meta: Meta, cols: TickTickColumn[] | undefined) {
+  for (const c of cols ?? []) meta.columns.set(c.id, (c.name ?? '').trim());
 }
 
 export function listName(projectId: string, meta: Pick<Meta, 'projects'>): string {
@@ -174,10 +199,11 @@ async function fetchUndone(
     const batch = await Promise.all(ids.slice(i, i + 6).map((id) => client.getProjectData(id)));
     for (const d of batch) {
       if (!d || !Array.isArray(d.tasks)) throw new ApiError('bad_response', 502, 'TickTick: /project/{id}/data sin "tasks"', 'ticktick');
-      if (d.project?.id) addColumns(meta, d.columns, d.project.id);
+      addColumns(meta, d.columns);
       out.push(...d.tasks);
     }
   }
+  await ensureColumns(client, meta, out);
   return out;
 }
 

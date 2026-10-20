@@ -1470,7 +1470,7 @@ document.addEventListener('input', ev => {
 function gradeMatch(x) {
   const d = S.gr.items;
   if (!d) return null;
-  const c = d.courses.find(c => [x.column, x.list].some(n => n && fold(n) === fold(c.name)));
+  const c = d.courses.find(c => [evCourse(x), x.column, x.list].some(n => n && fold(n) === fold(c.name)));
   if (!c) return null;
   const words = fold(x.name).split(/[^a-z0-9ñ]+/).filter(Boolean);
   const item = c.items.find(i => {
@@ -1571,11 +1571,36 @@ function sugRow(b, canStart) {
 const RADAR_WEEKS = 6;
 let radarItems = [];
 const mondayOfKey = k => addDays(k, -((dowOf(k) + 6) % 7));
-const evCourse = x => (x.column && x.projectId.startsWith('inbox')) ? x.column : (x.column || x.list || 'Otros');
+// Curso de una tarea: su columna; si TickTick no la informó (o es «Not Sectioned»/«Personal»), el curso
+// que nombre el título («PC3 EPP»); si no, la lista (fuera del inbox) u «Otros».
+function evCourse(x) {
+  if (x.column && !/^(not sectioned|personal)$/i.test(x.column.trim())) return x.column;
+  return titleCourse(x.title || x.name) || (!x.projectId.startsWith('inbox') && x.list) || 'Otros';
+}
+function titleCourse(title) {
+  const st = S.st.items, names = [...(st ? [...st.courses, ...(st.courseOptions || [])] : []), ...(S.gr.items ? S.gr.items.courses : [])].map(c => c.name);
+  const words = s => fold(s).replace(/[^a-z0-9ñ]+/g, ' ').trim();
+  const t = ' ' + words(title) + ' ';
+  return [...new Set(names)].sort((a, b) => b.length - a.length).find(n => words(n) && t.includes(' ' + words(n) + ' ')) || null;
+}
+/** Versión corta de shortEval para cuando la etiqueta no cabe: «Act. 4», «Trab. grupal», «Ex. final». */
+function tinyEval(name) {
+  const s = shortEval(name);
+  const t = s.replace(/^Actividad/i, 'Act.').replace(/^Trabajo/i, 'Trab.').replace(/^Examen/i, 'Ex.').replace(/^Presentaci[oó]n/i, 'Pres.').replace(/entrega$/i, 'entr.');
+  return t !== s || s.length <= 8 ? t : s.slice(0, 7) + '…';
+}
 function shortEval(name) {
   const m = String(name).match(/^(PC\s?\d+|Parcial|Examen(\s+final)?|Actividad\s+\d+|Trabajo\s+(final|grupal)|Entrega|\d+\S*\s+entrega|Presentaci[oó]n)/i);
   if (!m) return name.length > 14 ? name.slice(0, 13) + '…' : name;
   return /^pc/i.test(m[0]) ? m[0].toUpperCase().replace(/\s+/g, '') : cap(m[0].toLowerCase());
+}
+
+let measureCtx = null;
+function textWidth(s, font) {
+  measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
+  if (!measureCtx) return s.length * 6.2;
+  measureCtx.font = font;
+  return measureCtx.measureText(s).width;
 }
 
 function radarData() {
@@ -1585,7 +1610,7 @@ function radarData() {
     .filter(x => x.key && x.key >= t && x.key <= end && !isDone(x) && !evHidden.has(x.id))
     .map(x => { const g = gradeMatch(x); return { x, course: evCourse(x), day: Math.round((keyUTC(x.key) - keyUTC(monday)) / 864e5), weight: g ? g.item.weight : null }; });
   const order = S.st.items ? S.st.items.courses.map(c => c.name) : [];
-  const rank = c => { const i = order.indexOf(c); return i < 0 ? 99 : i; };
+  const rank = c => { const i = order.indexOf(c); return c === 'Otros' ? 100 : i < 0 ? 99 : i; };
   const rows = [...new Set(items.map(i => i.course))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, 'es'));
   const weeks = Array.from({ length: RADAR_WEEKS }, (_, w) => {
     const its = items.filter(i => Math.floor(i.day / 7) === w);
@@ -1641,17 +1666,39 @@ function renderRadar() {
   g += `<line class="now" x1="${nowX.toFixed(1)}" y1="${TOP - 4}" x2="${nowX.toFixed(1)}" y2="${HT - 16}"/><text class="wm" x="${nowX.toFixed(1)}" y="${HT - 4}" text-anchor="middle">hoy</text>`;
   // Puntos (más pesados primero, para que los chicos queden encima) y sus etiquetas.
   const pts = r.items.map((it, i) => ({ ...it, i, cx: L + (it.day + 0.5) * px, cy: TOP + r.rows.indexOf(it.course) * RH + RH / 2, rad: it.weight ? Math.min(12, 3.5 + it.weight / 5) : 4.5 }));
+  // Mismo curso y mismo día: uno sobre otro dentro del carril, en vez de taparse.
+  const sameDay = new Map();
+  pts.forEach(p => { const k = p.course + '|' + p.day; sameDay.set(k, [...(sameDay.get(k) || []), p]); });
+  sameDay.forEach(ps => ps.forEach((p, k) => { p.cy += Math.max(-12, Math.min(12, (k - (ps.length - 1) / 2) * 9)); }));
   [...pts].sort((a, b) => b.rad - a.rad).forEach(p => {
-    g += `<circle class="rd ${slot(p.course)}${p.weight ? '' : ' hollow'}" cx="${p.cx.toFixed(1)}" cy="${p.cy}" r="${p.rad.toFixed(1)}"/>`;
+    g += `<circle class="rd ${slot(p.course)}${p.weight ? '' : ' hollow'}" cx="${p.cx.toFixed(1)}" cy="${p.cy.toFixed(1)}" r="${p.rad.toFixed(1)}"/>`;
+  });
+  // Etiquetas sin choques: las más pesadas (y luego las más próximas) eligen primero; cada una prueba
+  // a la derecha, arriba, abajo y a la izquierda de su punto, completa o abreviada. Si no cabe, queda
+  // solo el punto: el detalle sigue en el tooltip y en «Ver como lista».
+  const font = '11px ' + (getComputedStyle(document.documentElement).getPropertyValue('--f-body').trim() || 'sans-serif');
+  const taken = pts.map(p => ({ x1: p.cx - p.rad, x2: p.cx + p.rad, y1: p.cy - p.rad, y2: p.cy + p.rad }));
+  const fits = b => b.x1 >= L + 2 && b.x2 <= W - 2 && b.y1 >= 38 && b.y2 <= HT - 14
+    && !taken.some(o => b.x1 < o.x2 + 3 && b.x2 > o.x1 - 3 && b.y1 < o.y2 + 1 && b.y2 > o.y1 - 1);
+  [...pts].sort((a, b) => b.rad - a.rad || a.day - b.day).forEach(p => {
+    const full = shortEval(p.x.name), tiny = tinyEval(p.x.name), r0 = p.rad;
+    const spots = (label) => {
+      const w = textWidth(label, font) + 1;
+      return [
+        { label, x: p.cx + r0 + 3, y: p.cy + 4, a: 'start', b: { x1: p.cx + r0 + 3, x2: p.cx + r0 + 3 + w, y1: p.cy - 5, y2: p.cy + 6 } },
+        { label, x: p.cx, y: p.cy - r0 - 4, a: 'middle', b: { x1: p.cx - w / 2, x2: p.cx + w / 2, y1: p.cy - r0 - 13, y2: p.cy - r0 - 2 } },
+        { label, x: p.cx, y: p.cy + r0 + 12, a: 'middle', b: { x1: p.cx - w / 2, x2: p.cx + w / 2, y1: p.cy + r0 + 3, y2: p.cy + r0 + 14 } },
+        { label, x: p.cx - r0 - 3, y: p.cy + 4, a: 'end', b: { x1: p.cx - r0 - 3 - w, x2: p.cx - r0 - 3, y1: p.cy - 5, y2: p.cy + 6 } },
+      ];
+    };
+    const a = spots(full), b = tiny === full ? [] : spots(tiny);
+    const spot = a.flatMap((s, k) => [s, b[k]]).find(s => s && fits(s.b));
+    if (!spot) return;
+    taken.push(spot.b);
+    g += `<text class="ml" x="${spot.x.toFixed(1)}" y="${spot.y.toFixed(1)}" text-anchor="${spot.a}">${esc(spot.label)}</text>`;
   });
   pts.forEach(p => {
-    const label = shortEval(p.x.name), lw = label.length * 6.2;
-    const next = pts.filter(q => q.course === p.course && q.cx > p.cx).sort((a, b) => a.cx - b.cx)[0];
-    const crowded = next && next.cx - p.cx < p.rad + lw + 8;
-    const atEnd = p.cx + p.rad + 3 + lw > W - 4;
-    const [x, y, anchor] = crowded ? [p.cx, p.cy - p.rad - 4, 'middle'] : atEnd ? [p.cx - p.rad - 3, p.cy + 4, 'end'] : [p.cx + p.rad + 3, p.cy + 4, 'start'];
-    g += `<text class="ml" x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor}">${esc(label)}</text>`;
-    g += `<circle class="rh" cx="${p.cx.toFixed(1)}" cy="${p.cy}" r="${Math.max(p.rad + 4, 11).toFixed(1)}" data-i="${p.i}"/>`;
+    g += `<circle class="rh" cx="${p.cx.toFixed(1)}" cy="${p.cy.toFixed(1)}" r="${Math.max(p.rad + 4, 11).toFixed(1)}" data-i="${p.i}"/>`;
   });
   const aria = `Próximas ${RADAR_WEEKS} semanas: ${r.items.length} evaluaciones en ${r.rows.length} cursos`
     + (hot.length ? `; semanas más cargadas: ${hot.map(w => `${range(w)} (${w.n} evaluaciones)`).join(', ')}` : '') + '. La lista de abajo tiene el detalle.';

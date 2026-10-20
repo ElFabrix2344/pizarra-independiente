@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TickTickClient } from '../src/lib/ticktick';
 import { mockFetch } from '../src/mock';
 import { getPanelCalendar, htmlToText, normalizeEvent } from '../src/services/calendar';
@@ -81,6 +81,44 @@ describe('/api/evaluations', () => {
     const ids = r.evaluations.map((e) => e.id);
     expect(ids).toContain('e6');
     expect(ids).not.toContain('e7');
+  });
+
+  it('consultas simultáneas esperan la misma lectura de columnas (ninguna sale sin curso)', async () => {
+    const reads: string[] = [];
+    const slow: typeof fetch = async (input, init) => {
+      const path = new URL(new Request(input, init).url).pathname;
+      if (path.endsWith('/column')) {
+        reads.push(path);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return mockFetch(input, init);
+    };
+    const c = new TickTickClient({ getAccessToken: async () => 'mock', fetch: slow });
+    const now = new Date();
+    const [tasks, evals] = await Promise.all([
+      getPanelTasks(c, { now, timeZone: TZ, strategy: 'undone' }),
+      getEvaluations(c, { now, timeZone: TZ, strategy: 'undone', limit: 40 }),
+    ]);
+    expect(evals.evaluations.find((e) => e.id === 'e8')!.column).toBe('Estadística Aplicada');
+    expect(tasks.tasks.find((t) => t.id === 't-over2')!.column).toBe('HEE');
+    // Una lectura por proyecto, y el inbox por su alias (como Estudio).
+    expect(reads.sort()).toEqual(['/open/v1/project/inbox/column', '/open/v1/project/p-cursob/column']);
+  });
+
+  it('si leer las columnas falla, la próxima consulta reintenta', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let down = true;
+    const flaky: typeof fetch = async (input, init) => {
+      const path = new URL(new Request(input, init).url).pathname;
+      if (down && (path.endsWith('/column') || path.endsWith('/inbox/data'))) return new Response('', { status: 503 });
+      return mockFetch(input, init);
+    };
+    const c = new TickTickClient({ getAccessToken: async () => 'mock', fetch: flaky });
+    const opts = { now: new Date(), timeZone: TZ, strategy: 'undone' as const, limit: 40 };
+    expect((await getEvaluations(c, opts)).evaluations.find((e) => e.id === 'e8')!.column).toBeNull();
+    down = false;
+    expect((await getEvaluations(c, opts)).evaluations.find((e) => e.id === 'e8')!.column).toBe('Estadística Aplicada');
+    vi.restoreAllMocks();
   });
 });
 
