@@ -536,6 +536,40 @@ section.grades{display:flex;flex-direction:column;gap:12px;min-width:0}
 .chart-wrap .col{transition:opacity .12s}
 .chart-wrap .col.dim{opacity:.4}
 .chart-wrap .tip{position:absolute;z-index:3;min-width:180px;max-width:240px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:.85rem;pointer-events:none;display:flex;flex-direction:column;gap:4px}
+
+/* ---------- próximas semanas (radar de evaluaciones) ---------- */
+.radar{display:flex;flex-direction:column;gap:12px;min-width:0}
+.radar > summary{list-style:none;cursor:pointer}
+.radar > summary::-webkit-details-marker{display:none}
+.radar > summary h2::after{content:"▾";display:inline-block;margin-left:8px;font-size:.85rem;color:var(--muted);transition:transform .15s}
+.radar:not([open]) > summary h2::after{transform:rotate(-90deg)}
+.radar-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.radar-card .hint{margin:0;font-size:.82rem;color:var(--muted)}
+.radar-plot{position:relative;overflow-x:auto;min-width:0}
+.radar-plot svg{display:block}
+.radar .gl{stroke:var(--grid);stroke-width:1}
+.radar .lane{stroke:var(--grid);stroke-width:1;stroke-dasharray:2 4}
+.radar .now{stroke:var(--ink);stroke-width:1.5}
+.radar .wl{fill:var(--tick);font-size:11px;font-family:var(--f-body)}
+.radar .wl.hot{fill:var(--warn);font-weight:700}
+.radar .wm{fill:var(--tick);font-size:11px;font-family:var(--f-body);font-variant-numeric:tabular-nums}
+.radar .wbar{fill:var(--axis)} .radar .wbar.hot{fill:var(--warn)}
+.radar .rl{fill:var(--ink);font-size:12px;font-weight:600;font-family:var(--f-body)}
+.radar .ml{fill:var(--ink);font-size:11px;font-family:var(--f-body)}
+/* Anillo de 2 px del color de la superficie: separa puntos que se tocan. */
+.radar .rd{stroke:var(--surface);stroke-width:2}
+.radar .rd.hollow{fill:var(--surface)}
+.radar .rd.hollow.s1{stroke:var(--s1)} .radar .rd.hollow.s2{stroke:var(--s2)} .radar .rd.hollow.s3{stroke:var(--s3)} .radar .rd.hollow.s4{stroke:var(--s4)}
+.radar .rd.hollow.s5{stroke:var(--s5)} .radar .rd.hollow.s6{stroke:var(--s6)} .radar .rd.hollow.s7{stroke:var(--s7)} .radar .rd.hollow.s8{stroke:var(--s8)}
+.radar .rd.hollow.s-other{stroke:var(--s-other)}
+.radar .rh{fill:transparent;cursor:pointer}
+.radar-plot .tip{position:absolute;z-index:3;min-width:170px;max-width:240px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px;box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:.84rem;pointer-events:none;display:flex;flex-direction:column;gap:2px}
+.radar-plot .tip .muted{color:var(--muted)}
+.radar-list > summary{cursor:pointer;font-weight:600;color:var(--muted);font-size:.88rem}
+.radar-list ul{margin:6px 0 0;padding-left:18px;font-size:.88rem;display:flex;flex-direction:column;gap:4px}
+.radar-list ul ul{margin:2px 0 0;gap:2px}
+.radar-list .hot{color:var(--warn);font-weight:700}
+.radar-list .muted{color:var(--muted)}
 .chart-wrap .tip .th{font-weight:700;margin-bottom:2px}
 .chart-wrap .tip .tr,.chart-wrap .tip .tt{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:0 4px}
 .chart-wrap .tip .tt{grid-template-columns:1fr auto;border-top:1px solid var(--hair);padding-top:4px;margin-top:2px}

@@ -244,6 +244,7 @@ npm run typecheck
 - Una tarea es evaluación si su título empieza con PC, Parcial, Examen, «Actividad N calificada», «Trabajo final/grupal», Entrega o Presentación (regla del panel original).
 - **Excepción**: si justo después viene un código de ciclo (`PC2 2026-I — …`, `Parcial 2025-2`, `PC1 26-1`), se entiende como material de un ciclo pasado para practicar y no se muestra.
 - Lo que la regla no detecte se oculta con ✕ (doble toque); «Restaurar» las vuelve a mostrar. La lista de ocultas vive en KV.
+- **Próximas semanas** (sección plegable sobre la Agenda; recuerda si la dejaste abierta): radar de las evaluaciones de las próximas 6 semanas, una fila por curso con el mismo color que en el historial. El tamaño de cada punto es su peso en la nota según el registro de Notas (hueco = sin peso registrado). Arriba, la carga de cada semana (barra = cantidad de evaluaciones, texto = peso sumado) y **nudo** cuando hay 3+ evaluaciones o 2+ que suman 40 %+. Al pasar el cursor o tocar un punto: fecha, cuánto falta y lo que necesitas sacar; «Ver como lista» tiene el mismo detalle en texto. La ficha «Próximas evaluaciones» pide hasta 40 (`/api/evaluations?limit=40`) y muestra las 6 más cercanas.
 
 ## Notas
 

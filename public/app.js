@@ -81,7 +81,8 @@ const calGoodAt = new Map();
 const SOURCES = {
   cal: { path: '/api/calendar', pick: pickCalendar },
   tt: { path: '/api/tasks', pick: b => b.tasks.map(toTask) },
-  ev: { path: '/api/evaluations', pick: b => { evIgnored = b.ignoredCount || 0; return b.evaluations.map(toTask); } },
+  // Hasta 40 (las del radar de próximas semanas); la ficha muestra las 6 más cercanas.
+  ev: { path: '/api/evaluations?limit=40', pick: b => { evIgnored = b.ignoredCount || 0; return b.evaluations.map(toTask); } },
   st: { path: '/api/study', pick: b => b },
   gr: { path: '/api/grades', pick: b => b },
 };
@@ -381,7 +382,7 @@ function renderExams() {
   if (ev.status === 'loading' && !ev.at) h += '<span class="muted">Cargando…</span>';
   else if (ev.status === 'error') h += errorBox(TT, ev.err);
   else {
-    const list = ev.items.filter(x => x.key && x.key >= t && !isDone(x) && !evHidden.has(x.id));
+    const list = ev.items.filter(x => x.key && x.key >= t && !isDone(x) && !evHidden.has(x.id)).slice(0, 6);
     if (!list.length) h += '<span class="muted">Nada en los próximos 70 días. Las tareas de TickTick que empiezan con PC, Parcial, Examen, Entrega o Actividad calificada aparecen aquí.</span>';
     else {
       h += '<ul class="exams">';
@@ -1059,8 +1060,9 @@ async function loadHistory() {
   }
   renderHistory();
   renderStreak();
-  // El ritmo y la tabla por día también usan el historial.
+  // El ritmo y la tabla por día también usan el historial; el radar, sus colores por curso.
   if (S.st.items) renderStudy();
+  renderRadar();
 }
 
 function slotOf(h, course) {
@@ -1445,8 +1447,8 @@ document.addEventListener('input', ev => {
   if (ev.target.closest('#grades-settings')) gSettingsDirty = true;
 });
 
-/** Peso y nota necesaria de una evaluación próxima, si coincide con una del registro de notas. */
-function gradeInfoFor(x) {
+/** La evaluación del registro de notas que corresponde a una tarea (mismo curso y todas las palabras del nombre). */
+function gradeMatch(x) {
   const d = S.gr.items;
   if (!d) return null;
   const c = d.courses.find(c => [x.column, x.list].some(n => n && fold(n) === fold(c.name)));
@@ -1456,7 +1458,14 @@ function gradeInfoFor(x) {
     const iw = fold(i.name).split(/[^a-z0-9ñ]+/).filter(Boolean);
     return iw.length && iw.every(w => words.includes(w));
   });
-  if (!item) return null;
+  return item ? { c, item } : null;
+}
+
+/** Peso y nota necesaria de una evaluación próxima, si coincide con una del registro de notas. */
+function gradeInfoFor(x) {
+  const g = gradeMatch(x);
+  if (!g) return null;
+  const { c, item } = g;
   if (item.grade !== null) return `${fmtN(item.weight)} % · nota ${fmtN(item.grade)}`;
   const n = c.goal || c.pass;
   const what = c.goal ? 'meta' : 'aprobar';
@@ -1464,6 +1473,149 @@ function gradeInfoFor(x) {
   if (n.status === 'secured' || n.status === 'done') return `${fmtN(item.weight)} % · ${what} asegurado`;
   return `${fmtN(item.weight)} %`;
 }
+
+/* ---------- próximas semanas: radar de evaluaciones ----------
+   Una fila por curso y un punto por evaluación en las próximas 6 semanas; el tamaño es su peso en la
+   nota (del registro de Notas). Arriba, la carga de cada semana (barra = cantidad; texto = peso sumado):
+   «nudo» con 3+ evaluaciones, o 2+ que sumen 40 %+. Colores por curso iguales a los del historial. */
+const RADAR_WEEKS = 6;
+let radarItems = [];
+const mondayOfKey = k => addDays(k, -((dowOf(k) + 6) % 7));
+const evCourse = x => (x.column && x.projectId.startsWith('inbox')) ? x.column : (x.column || x.list || 'Otros');
+function shortEval(name) {
+  const m = String(name).match(/^(PC\s?\d+|Parcial|Examen(\s+final)?|Actividad\s+\d+|Trabajo\s+(final|grupal)|Entrega|\d+\S*\s+entrega|Presentaci[oó]n)/i);
+  if (!m) return name.length > 14 ? name.slice(0, 13) + '…' : name;
+  return /^pc/i.test(m[0]) ? m[0].toUpperCase().replace(/\s+/g, '') : cap(m[0].toLowerCase());
+}
+
+function radarData() {
+  if (!S.ev.items) return null;
+  const t = today(), monday = mondayOfKey(t), end = addDays(monday, 7 * RADAR_WEEKS - 1);
+  const items = S.ev.items
+    .filter(x => x.key && x.key >= t && x.key <= end && !isDone(x) && !evHidden.has(x.id))
+    .map(x => { const g = gradeMatch(x); return { x, course: evCourse(x), day: Math.round((keyUTC(x.key) - keyUTC(monday)) / 864e5), weight: g ? g.item.weight : null }; });
+  const order = S.st.items ? S.st.items.courses.map(c => c.name) : [];
+  const rank = c => { const i = order.indexOf(c); return i < 0 ? 99 : i; };
+  const rows = [...new Set(items.map(i => i.course))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, 'es'));
+  const weeks = Array.from({ length: RADAR_WEEKS }, (_, w) => {
+    const its = items.filter(i => Math.floor(i.day / 7) === w);
+    const load = its.reduce((a, i) => a + (i.weight || 0), 0);
+    // Nudo = cosas que se juntan: 3+ evaluaciones, o 2+ que sumen 40 %+ (un solo examen pesado no es un nudo).
+    return { w, start: addDays(monday, 7 * w), n: its.length, load, hot: its.length >= 3 || (its.length >= 2 && load >= 40) };
+  });
+  return { t, monday, items, rows, weeks, todayIdx: Math.round((keyUTC(t) - keyUTC(monday)) / 864e5) };
+}
+
+function renderRadar() {
+  const box = $('radar'), sum = $('radar-sum');
+  if (!box) return;
+  const ev = S.ev;
+  if (ev.status === 'loading' && !ev.at) { box.innerHTML = '<div class="radar-card"><div class="skel"></div></div>'; return; }
+  if (ev.status === 'error') { box.innerHTML = `<div class="radar-card">${errorBox(TT, ev.err)}</div>`; sum.textContent = ''; return; }
+  const r = radarData();
+  if (!r) return;
+  radarItems = r.items;
+  const hot = r.weeks.filter(w => w.hot);
+  const range = w => `${fWeekLbl.format(keyUTC(w.start))} – ${fWeekLbl.format(keyUTC(addDays(w.start, 6)))}`;
+  sum.textContent = !r.items.length ? '' : `${r.items.length} ${r.items.length === 1 ? 'evaluación' : 'evaluaciones'}${hot.length ? ` · ${hot.length === 1 ? 'nudo' : 'nudos'}: ${hot.map(range).join(', ')}` : ' · sin nudos'}`;
+  if (!r.items.length) {
+    box.innerHTML = '<div class="radar-card"><div class="empty">Sin evaluaciones en las próximas 6 semanas. Aparecen las tareas de TickTick que empiezan con PC, Parcial, Examen, Entrega, Actividad N calificada, Trabajo final/grupal o Presentación.</div></div>';
+    return;
+  }
+
+  // Geometría: columna de cursos + 42 días; en el celular, mínimo 9 px por día (se desliza).
+  const avail = Math.max(280, box.clientWidth - 38);
+  const L = Math.round(Math.min(160, avail * 0.28, Math.max(76, 18 + 6.6 * Math.max(...r.rows.map(c => c.length)))));
+  const maxChars = Math.floor((L - 16) / 6.6);
+  const px = Math.max(11, (avail - L - 10) / (RADAR_WEEKS * 7));
+  const W = Math.round(L + RADAR_WEEKS * 7 * px + 10), TOP = 46, RH = 34, HT = TOP + r.rows.length * RH + 18;
+  const maxN = Math.max(3, ...r.weeks.map(w => w.n)); // la barra mide cuántas evaluaciones hay (el peso va en el texto)
+  const slot = c => (H.data && H.data.courses) ? slotOf(H.data, c) : 's-other';
+  let g = '';
+  r.weeks.forEach(w => {
+    const x = L + w.w * 7 * px, ww = 7 * px;
+    g += `<line class="gl" x1="${x.toFixed(1)}" y1="2" x2="${x.toFixed(1)}" y2="${HT - 16}"/>`;
+    const wlabel = w.w === 0 && ww >= 90 ? 'esta semana' : fWeekLbl.format(keyUTC(w.start));
+    g += `<text class="wl${w.hot ? ' hot' : ''}" x="${(x + 4).toFixed(1)}" y="12">${esc(wlabel)}${w.hot ? ' · nudo' : ''}</text>`;
+    if (w.n) {
+      g += `<text class="wm" x="${(x + 4).toFixed(1)}" y="25">${w.n} ev.${w.load ? ` · ${fmtN(w.load)} %` : ''}</text>`;
+      g += `<rect class="wbar${w.hot ? ' hot' : ''}" x="${(x + 4).toFixed(1)}" y="31" width="${((w.n / maxN) * (ww - 8)).toFixed(1)}" height="6" rx="3"/>`;
+    }
+  });
+  r.rows.forEach((c, i) => {
+    const y = TOP + i * RH + RH / 2;
+    g += `<line class="lane" x1="${L}" y1="${y}" x2="${W - 6}" y2="${y}"/>`;
+    g += `<circle class="${slot(c)}" cx="5" cy="${y}" r="4"/><text class="rl" x="14" y="${y + 4}">${esc(c.length > maxChars ? c.slice(0, maxChars - 1) + '…' : c)}</text>`;
+  });
+  const nowX = L + r.todayIdx * px;
+  g += `<line class="now" x1="${nowX.toFixed(1)}" y1="${TOP - 4}" x2="${nowX.toFixed(1)}" y2="${HT - 16}"/><text class="wm" x="${nowX.toFixed(1)}" y="${HT - 4}" text-anchor="middle">hoy</text>`;
+  // Puntos (más pesados primero, para que los chicos queden encima) y sus etiquetas.
+  const pts = r.items.map((it, i) => ({ ...it, i, cx: L + (it.day + 0.5) * px, cy: TOP + r.rows.indexOf(it.course) * RH + RH / 2, rad: it.weight ? Math.min(12, 3.5 + it.weight / 5) : 4.5 }));
+  [...pts].sort((a, b) => b.rad - a.rad).forEach(p => {
+    g += `<circle class="rd ${slot(p.course)}${p.weight ? '' : ' hollow'}" cx="${p.cx.toFixed(1)}" cy="${p.cy}" r="${p.rad.toFixed(1)}"/>`;
+  });
+  pts.forEach(p => {
+    const label = shortEval(p.x.name), lw = label.length * 6.2;
+    const next = pts.filter(q => q.course === p.course && q.cx > p.cx).sort((a, b) => a.cx - b.cx)[0];
+    const crowded = next && next.cx - p.cx < p.rad + lw + 8;
+    const atEnd = p.cx + p.rad + 3 + lw > W - 4;
+    const [x, y, anchor] = crowded ? [p.cx, p.cy - p.rad - 4, 'middle'] : atEnd ? [p.cx - p.rad - 3, p.cy + 4, 'end'] : [p.cx + p.rad + 3, p.cy + 4, 'start'];
+    g += `<text class="ml" x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor}">${esc(label)}</text>`;
+    g += `<circle class="rh" cx="${p.cx.toFixed(1)}" cy="${p.cy}" r="${Math.max(p.rad + 4, 11).toFixed(1)}" data-i="${p.i}"/>`;
+  });
+  const aria = `Próximas ${RADAR_WEEKS} semanas: ${r.items.length} evaluaciones en ${r.rows.length} cursos`
+    + (hot.length ? `; semanas más cargadas: ${hot.map(w => `${range(w)} (${w.n} evaluaciones)`).join(', ')}` : '') + '. La lista de abajo tiene el detalle.';
+
+  const list = r.weeks.filter(w => w.n).map(w => `<li><b>${esc(range(w))}</b>${w.hot ? ' <span class="hot">· nudo</span>' : ''} <span class="muted">· ${w.n} ev.${w.load ? ` · ${fmtN(w.load)} %` : ''}</span><ul>`
+    + r.items.filter(i => Math.floor(i.day / 7) === w.w).map(i => `<li>${esc(cap(fDayShort.format(i.x.due ? new Date(i.x.due) : keyUTC(i.x.key))))} · ${esc(i.x.name)} <span class="muted">· ${esc(i.course)}${i.weight ? ` · ${fmtN(i.weight)} %` : ''}</span></li>`).join('') + '</ul></li>').join('');
+
+  box.innerHTML = `<div class="radar-card">
+    <div class="radar-plot" id="radar-plot"><svg width="${W}" height="${HT}" viewBox="0 0 ${W} ${HT}" role="img" aria-label="${esc(aria)}">${g}</svg><div class="tip" id="radar-tip" hidden></div></div>
+    <p class="hint">El tamaño del punto es el peso en tu nota (registro de Notas); los huecos, evaluaciones sin peso registrado. Nudo: 3+ evaluaciones en la semana, o 2+ que sumen 40 %+.</p>
+    <details class="radar-list"><summary>Ver como lista</summary><ul>${list}</ul></details>
+  </div>`;
+}
+
+function showRadarTip(el) {
+  const tip = document.getElementById('radar-tip'), plot = document.getElementById('radar-plot');
+  if (!tip || !plot) return;
+  const it = el && radarItems[Number(el.dataset.i)];
+  if (!it) { tip.hidden = true; return; }
+  const x = it.x, gi = gradeInfoFor(x);
+  const d = Math.round((keyUTC(x.key) - keyUTC(today())) / 864e5);
+  const when = cap(fDay.format(x.due ? new Date(x.due) : keyUTC(x.key))) + (x.allDay || !x.due ? '' : ' · ' + fTime.format(new Date(x.due)));
+  tip.innerHTML = `<b>${esc(x.name)}</b><span>${esc(it.course)} · ${esc(when)}</span><span>${d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${d} días`}</span>`
+    + `<span class="muted">${gi ? esc(gi) : 'Peso sin registrar: agrégalo en Notas'}</span>`;
+  tip.hidden = false;
+  const r = el.getBoundingClientRect(), pr = plot.getBoundingClientRect();
+  let left = r.left - pr.left + plot.scrollLeft + r.width / 2 - tip.offsetWidth / 2;
+  left = Math.max(plot.scrollLeft, Math.min(left, plot.scrollLeft + plot.clientWidth - tip.offsetWidth));
+  tip.style.left = left + 'px';
+  tip.style.top = Math.max(0, r.top - pr.top - tip.offsetHeight - 6) + 'px';
+}
+document.addEventListener('pointermove', ev => {
+  const c = ev.target.closest && ev.target.closest('#radar-plot .rh');
+  if (c) showRadarTip(c);
+  else if (!(ev.target.closest && ev.target.closest('#radar-plot'))) showRadarTip(null);
+});
+document.addEventListener('click', ev => {
+  const c = ev.target.closest && ev.target.closest('#radar-plot .rh');
+  if (c) showRadarTip(c);
+});
+if (window.ResizeObserver) {
+  let t3 = null, lastW3 = 0;
+  new ResizeObserver(es => { const w = Math.round(es[0].contentRect.width); if (w === lastW3) return; lastW3 = w; clearTimeout(t3); t3 = setTimeout(renderRadar, 120); }).observe(document.getElementById('radar'));
+}
+// La sección recuerda si la dejaste abierta o cerrada (en este dispositivo).
+(() => {
+  const wrap = document.getElementById('radar-wrap');
+  if (!wrap) return;
+  try { if (localStorage.getItem('bitacora:radar') === '0') wrap.open = false; } catch (_) { /* sin almacenamiento */ }
+  wrap.addEventListener('toggle', () => {
+    try { localStorage.setItem('bitacora:radar', wrap.open ? '1' : '0'); } catch (_) { /* sin almacenamiento */ }
+    if (wrap.open) renderRadar();
+  });
+})();
 
 /* ---------- constancia (mapa de días) ---------- */
 const fDayTip = new Intl.DateTimeFormat('es-PE', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
@@ -1593,7 +1745,7 @@ function applyColors() {
 }
 
 function render() {
-  renderDate(); renderBanner(); renderHero(); renderCounts(); renderExams(); renderStudy(); renderGrades(); renderCal(); renderTT();
+  renderDate(); renderBanner(); renderHero(); renderCounts(); renderExams(); renderStudy(); renderGrades(); renderRadar(); renderCal(); renderTT();
   applyColors();
   setFresh($('fresh-cal'), freshText(S.cal));
   setFresh($('fresh-tt'), freshText(S.tt, S.ev));
