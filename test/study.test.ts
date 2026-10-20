@@ -179,6 +179,18 @@ describe('cursos visibles', () => {
     await expect(saveGoals(client(), store, {}, { minutes: 17 * 60, weekdays: [1] })).rejects.toMatchObject({ status: 400 });
     expect((await saveGoals(client(), store, {}, { minutes: 0, weekdays: [] })).daily).toEqual({ minutes: 0, weekdays: [] });
   });
+  it('bloques sugeridos: 8:00–22:00 por defecto; horario válido y que se conserva', async () => {
+    const { DEFAULT_BLOCKS } = await import('../src/services/study');
+    const store = new StudyStore(memKV());
+    const now = new Date();
+    expect((await getStudy(client(), store, { now, timeZone: TZ })).blocks).toEqual(DEFAULT_BLOCKS);
+    expect(DEFAULT_BLOCKS).toEqual({ on: true, from: '08:00', to: '22:00' });
+    expect((await saveGoals(client(), store, {}, undefined, { on: false, from: '09:30', to: '23:00' })).blocks).toEqual({ on: false, from: '09:30', to: '23:00' });
+    await saveGoals(client(), store, { HEE: 60 }, { minutes: 240, weekdays: [1, 2, 3, 4, 5] }); // sin `blocks`: se conservan
+    expect((await getStudy(client(), store, { now, timeZone: TZ })).blocks).toEqual({ on: false, from: '09:30', to: '23:00' });
+    await expect(saveGoals(client(), store, {}, undefined, { from: '22:00', to: '08:00' })).rejects.toMatchObject({ status: 400 });
+    await expect(saveGoals(client(), store, {}, undefined, { from: '8:00', to: '22:00' })).rejects.toMatchObject({ status: 400 });
+  });
 });
 
 describe('historial del ciclo', () => {

@@ -60,6 +60,28 @@ export interface StudySettings {
   cycleStart?: string;
   /** Meta diaria (todo lo estudiado en el día). Sin guardar: DEFAULT_DAILY. */
   daily?: DailyGoal;
+  /** Bloques sugeridos en la Agenda. Sin guardar: DEFAULT_BLOCKS. */
+  blocks?: BlockPrefs;
+}
+
+export interface BlockPrefs {
+  /** Mostrar bloques sugeridos en la Agenda. */
+  on: boolean;
+  /** Horario en que se sugiere estudiar ("HH:MM", hora de Lima). */
+  from: string;
+  to: string;
+}
+export const DEFAULT_BLOCKS: BlockPrefs = { on: true, from: '08:00', to: '22:00' };
+export const blockPrefs = (s: StudySettings): BlockPrefs => s.blocks ?? DEFAULT_BLOCKS;
+
+export function validBlocks(raw: unknown): BlockPrefs {
+  if (!raw || typeof raw !== 'object') throw new ApiError('bad_request', 400, 'Preferencias de bloques inválidas.');
+  const r = raw as Record<string, unknown>;
+  const hhmm = (v: unknown) => (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : null);
+  const from = hhmm(r.from), to = hhmm(r.to);
+  if (!from || !to) throw new ApiError('bad_request', 400, 'El horario de los bloques debe ser HH:MM.');
+  if (from >= to) throw new ApiError('bad_request', 400, 'El horario de los bloques debe empezar antes de terminar.');
+  return { on: r.on !== false, from, to };
 }
 
 export interface DailyGoal {
@@ -115,6 +137,7 @@ export class StudyStore {
       extra: s?.extra ?? [],
       ...(s?.cycleStart ? { cycleStart: s.cycleStart } : {}),
       ...(s?.daily ? { daily: s.daily } : {}),
+      ...(s?.blocks ? { blocks: s.blocks } : {}),
     };
   }
   setSettings(s: StudySettings) {
@@ -280,6 +303,8 @@ export interface StudyResult {
   courseOptions: Array<{ name: string; source: 'ticktick' | 'extra'; visible: boolean }>;
   /** Meta diaria vigente (la planta). */
   daily: DailyGoal;
+  /** Preferencias de los bloques sugeridos. */
+  blocks: BlockPrefs;
 }
 
 /** Ventana máxima de GET /focus (el servidor recorta a 30 días). */
@@ -381,6 +406,7 @@ export async function getStudy(
       ...settings.extra.map((name) => ({ name, source: 'extra' as const, visible: true })),
     ],
     daily: dailyGoal(settings),
+    blocks: blockPrefs(settings),
   };
 }
 
@@ -691,9 +717,10 @@ export async function addManual(
   return { saved: true, id: focus?.id ?? null, course, minutes: Math.round(minutes), date };
 }
 
-export async function saveGoals(client: TickTickClient, store: StudyStore, goals: unknown, dailyRaw?: unknown) {
+export async function saveGoals(client: TickTickClient, store: StudyStore, goals: unknown, dailyRaw?: unknown, blocksRaw?: unknown) {
   if (!goals || typeof goals !== 'object') throw new ApiError('bad_request', 400, 'Metas inválidas.');
   const daily = dailyRaw === undefined ? undefined : validDaily(dailyRaw);
+  const blocks = blocksRaw === undefined ? undefined : validBlocks(blocksRaw);
   const settings = await store.getSettings();
   const courses = visibleCourses(await loadCourses(client), settings);
   const clean: Record<string, number> = {};
@@ -703,9 +730,9 @@ export async function saveGoals(client: TickTickClient, store: StudyStore, goals
     if (!name || !Number.isFinite(n) || n <= 0) continue;
     clean[name] = Math.min(Math.round(n), 80 * 60);
   }
-  const next = { ...settings, goals: clean, ...(daily ? { daily } : {}) };
+  const next = { ...settings, goals: clean, ...(daily ? { daily } : {}), ...(blocks ? { blocks } : {}) };
   await store.setSettings(next);
-  return { goals: clean, daily: dailyGoal(next) };
+  return { goals: clean, daily: dailyGoal(next), blocks: blockPrefs(next) };
 }
 
 /** Qué columnas ocultar y qué cursos extra agregar. Las metas de cursos que dejan de verse se conservan. */

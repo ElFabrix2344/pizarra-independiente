@@ -242,30 +242,42 @@ function renderCal() {
   const s = S.cal, body = $('cal-body');
   if (s.status === 'loading' && !s.at) { body.innerHTML = skeleton(); return; }
   if (s.status === 'error') { body.innerHTML = errorBox(CAL, s.err); return; }
-  const now = Date.now(), t = today(), mainId = featured().main?.id, groups = new Map();
+  const now = Date.now(), t = today(), mainId = featured().main?.id;
+  let groups = new Map();
   for (const e of s.items) { if (!groups.has(e.key)) groups.set(e.key, []); groups.get(e.key).push(e); }
+  // Bloques sugeridos: entran en su día (aunque ese día no tenga eventos).
+  const sug = suggestions();
+  if (sug && (sug.blocks.length || sug.note) && !groups.has(sug.day)) {
+    groups.set(sug.day, []);
+    groups = new Map([...groups].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+  }
+  const canStart = !(S.st.items && S.st.items.active);
   let h = s.status === 'stale' ? errorBox(CAL, s.err) : calFailed.length ? calFailedBox() : '';
   if (!groups.size) { body.innerHTML = h + '<div class="empty">No hay eventos en los próximos 7 días.</div>'; return; }
   for (const [k, evs] of groups) {
     const allDay = evs.filter(e => e.allDay), timed = evs.filter(e => !e.allDay);
     const past = k === t ? timed.filter(e => e.end <= now) : [];
     const rest = timed.filter(e => !past.includes(e));
+    const here = sug && sug.day === k ? sug : null;
+    const rows = [...rest.map(e => ({ at: +e.start, html: evRow(e, mainId, now) })), ...(here ? here.blocks : []).map(b => ({ at: b.start, html: sugRow(b, canStart) }))]
+      .sort((a, b) => a.at - b.at);
     h += `<div class="day">${dayHeader(k)}`;
     if (allDay.length) {
       h += '<div class="allday">' + allDay.map(e => e.link
         ? `<a class="chip"${colorAttr(e)} href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Todo el día · ${esc(e.title)}</a>`
         : `<span class="chip"${colorAttr(e)}>Todo el día · ${esc(e.title)}</span>`).join('') + '</div>';
     }
-    if (past.length || rest.length) {
+    if (past.length || rows.length) {
       h += '<ul class="rows">';
       if (past.length) {
         const n = past.length;
         h += `<li><button type="button" class="past-toggle" data-toggle-past aria-expanded="${showPast}">${showPast ? 'Ocultar' : 'Mostrar'} ${n === 1 ? '1 evento terminado' : n + ' eventos terminados'}</button></li>`;
         if (showPast) h += past.map(e => evRow(e, mainId, now)).join('');
       }
-      h += rest.map(e => evRow(e, mainId, now)).join('');
+      h += rows.map(r => r.html).join('');
       h += '</ul>';
     }
+    if (here && here.note) h += `<p class="sug-note">${esc(here.note)}</p>`;
     h += '</div>';
   }
   body.innerHTML = h;
@@ -889,6 +901,7 @@ function renderStudyMore(d) {
     <label>Día<input name="date" type="date" value="${d.today}" max="${d.today}"></label>
     <button type="submit">Guardar sesión</button></form>`;
   const dg = d.daily || { minutes: 0, weekdays: [1, 2, 3, 4, 5] };
+  const bp = d.blocks || { on: true, from: '08:00', to: '22:00' };
   const dKey = dg.weekdays.join(',');
   const dOpts = [['1,2,3,4,5', 'Lunes a viernes'], ['1,2,3,4,5,6', 'Lunes a sábado'], ['0,1,2,3,4,5,6', 'Todos los días']];
   if (!dOpts.some(([v]) => v === dKey)) dOpts.push([dKey, daysLabel(dg.weekdays)]);
@@ -898,6 +911,11 @@ function renderStudyMore(d) {
     <p class="hint">Todo lo que estudies en el día, de cualquier curso. La planta florece al cumplirla; los días libres no cortan la racha. 0 = sin meta diaria.</p>
     <label class="goal-row">Horas por día<span class="row"><input type="number" name="dailyHours" min="0" max="16" step="0.5" value="${dg.minutes ? +(dg.minutes / 60).toFixed(2) : 0}" aria-label="Horas por día"> h</span></label>
     <label class="goal-row">Días que cuentan<select name="dailyDays">${dOpts.map(([v, l]) => `<option value="${v}"${v === dKey ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+    <h3 class="sub-h">Bloques sugeridos</h3>
+    <p class="hint">En la Agenda, huecos libres entre tus eventos para lo que te falta estudiar hoy (primero el curso con la evaluación más cercana).</p>
+    <label class="check-row"><input type="checkbox" name="blocksOn"${bp.on ? ' checked' : ''}> Mostrar en la Agenda</label>
+    <label class="goal-row">Desde<input type="time" name="blocksFrom" value="${esc(bp.from)}" step="300"></label>
+    <label class="goal-row">Hasta<input type="time" name="blocksTo" value="${esc(bp.to)}" step="300"></label>
     <button type="submit">Guardar metas</button></form>`;
   const list = d.sessions.length
     ? '<ul class="sessions">' + d.sessions.map(x => {
@@ -1027,8 +1045,9 @@ document.addEventListener('submit', ev => {
     const goals = {};
     f.querySelectorAll('[data-goal]').forEach(i => { const h = Number(i.value); if (h > 0) goals[i.dataset.goal] = Math.round(h * 60); });
     const daily = { minutes: Math.round((Number(f.dailyHours.value) || 0) * 60), weekdays: f.dailyDays.value.split(',').map(Number) };
+    const blocks = { on: f.blocksOn.checked, from: f.blocksFrom.value, to: f.blocksTo.value };
     moreRenderedAt = null;
-    studyAction('/api/study/goals', 'PUT', { goals, daily });
+    studyAction('/api/study/goals', 'PUT', { goals, daily, blocks });
   }
 });
 document.addEventListener('input', ev => { if (ev.target.closest('#study-more')) moreDirty = true; });
@@ -1472,6 +1491,77 @@ function gradeInfoFor(x) {
   if (n.status === 'possible') return `${fmtN(item.weight)} % · necesitas ${Math.ceil(n.average - 1e-9)} para ${what}`;
   if (n.status === 'secured' || n.status === 'done') return `${fmtN(item.weight)} % · ${what} asegurado`;
   return `${fmtN(item.weight)} %`;
+}
+
+/* ---------- bloques sugeridos (en la Agenda) ----------
+   Lo que falta estudiar hoy (la parte de hoy del ritmo semanal de cada curso, completada hasta la
+   meta diaria) repartido en los huecos libres entre tus eventos, dentro del horario de Metas.
+   Primero el curso con la evaluación más cercana (≤ 14 días); después, el que más le debe a su meta
+   semanal. Si el horario de hoy ya terminó, se sugiere mañana. Lógica en pace.js. */
+function suggestions() {
+  const d = S.st.items, prefs = d && d.blocks;
+  if (!d || !prefs || !prefs.on || !S.cal.at || S.cal.status === 'error') return null;
+  const now = serverNow(), M = 60000;
+  const win = k => ({ from: +new Date(`${k}T${prefs.from}:00-05:00`), to: +new Date(`${k}T${prefs.to}:00-05:00`) });
+  const events = S.cal.items.filter(e => !e.allDay).map(e => ({ start: +e.start, end: +e.end }));
+  const pace = studyPace(d);
+  const goals = d.courses.filter(c => c.goalMinutes);
+  const weekLeft = c => { if (!c || !c.goalMinutes) return 0; const cp = pace.byCourse[c.name]; return Math.max(0, c.goalMinutes - (cp ? cp.doneWeek : c.minutes)); };
+  const ds = dailyState(d); // lo estudiado hoy en total (todas las materias + el cronómetro en marcha)
+
+  const plan = (k, isToday) => {
+    // Necesidad por curso: la parte de hoy (o de mañana) de la meta semanal.
+    const newWeek = !isToday && d.today === d.weekEnd;
+    const base = {};
+    for (const c of goals) {
+      const cp = pace.byCourse[c.name], p = cp && cp.plan;
+      base[c.name] = newWeek ? c.goalMinutes / 7 : !p || p.met ? 0 : isToday ? p.todayLeft : p.perDayAfter;
+    }
+    // Evaluaciones cercanas: dan prioridad y se llevan lo que falte para la meta diaria.
+    const evals = {};
+    for (const x of (S.ev.items || [])) {
+      if (!x.key || x.key < k || isDone(x) || evHidden.has(x.id)) continue;
+      const days = Math.round((keyUTC(x.key) - keyUTC(k)) / 864e5);
+      const course = d.courses.find(c => [evCourse(x), x.column, x.list].some(n => n && fold(n) === fold(c.name)));
+      if (course && days <= 14 && !(course.name in evals)) evals[course.name] = { days, name: shortEval(x.name) };
+    }
+    const order = d.courses.map(c => c.name).sort((a, b) =>
+      (evals[a] ? evals[a].days : 99) - (evals[b] ? evals[b].days : 99)
+      || weekLeft(d.courses.find(c => c.name === b)) - weekLeft(d.courses.find(c => c.name === a)));
+    const daily = d.daily && d.daily.minutes && d.daily.weekdays.includes(dowOf(k)) ? d.daily.minutes : 0;
+    const dailyLeft = isToday ? Math.max(0, daily - (ds ? ds.done : 0)) : daily;
+    const sum = Object.values(base).reduce((a, b) => a + b, 0);
+    const extra = Math.max(0, dailyLeft - sum);
+    const needs = order.map(name => ({ course: name, minutes: (base[name] || 0) + (name === order[0] ? extra : 0) })).filter(n => n.minutes >= 10);
+    const w = win(k);
+    const from = isToday ? Math.max(w.from, now + 5 * M) : w.from;
+    const blocks = Pace.suggestBlocks({ slots: Pace.freeSlots({ events, from, to: w.to }), needs });
+    for (const b of blocks) {
+      const why = [];
+      const e = evals[b.course];
+      if (e) why.push(`${e.name} ${e.days === 0 ? 'hoy' : e.days === 1 ? 'mañana' : `en ${e.days} días`}`);
+      const c = d.courses.find(x => x.name === b.course);
+      if (c && c.goalMinutes && weekLeft(c) > 0) why.push(`faltan ${fmtMin(weekLeft(c))} esta semana`);
+      if (extra > 0 && b.course === order[0] && daily) why.push(`para tus ${fmtMin(daily)} del día`);
+      b.why = why.join(' · ');
+    }
+    return { day: k, blocks, needs: needs.length, window: w };
+  };
+
+  const today = plan(d.today, true);
+  if (today.blocks.length) return today;
+  // Terminado el horario de hoy, se planea mañana; si no, se avisa que no hay huecos (o nada, si no falta nada).
+  if (now >= today.window.to - 30 * M) return plan(addDays(d.today, 1), false);
+  return today.needs ? { ...today, note: `No quedan huecos de 30 min hoy entre ${prefs.from} y ${prefs.to}.` } : today;
+}
+
+function sugRow(b, canStart) {
+  return `<li class="ev sug">
+    <div class="sug-main">
+      <span class="when"><b>${fTime.format(new Date(b.start))}</b><span>${fTime.format(new Date(b.end))}</span></span>
+      <span class="sug-body"><span class="t"><span class="sug-tag">Sugerido</span>${esc(b.course)} · ${fmtMin(b.minutes)}</span>${b.why ? `<span class="sug-why">${esc(b.why)}</span>` : ''}</span>
+      ${canStart ? `<button type="button" class="sug-go" data-study-start="${esc(b.course)}" aria-label="Empezar a estudiar ${esc(b.course)}" title="Empezar a estudiar ${esc(b.course)}">▶</button>` : ''}
+    </div></li>`;
 }
 
 /* ---------- próximas semanas: radar de evaluaciones ----------

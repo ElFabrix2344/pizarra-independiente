@@ -199,6 +199,17 @@ section.panel{display:flex;flex-direction:column;gap:14px;min-width:0}
 .ev .live{display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);vertical-align:2px}
 .ev .live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok)}
 .ev.past .row-main{opacity:.55}
+/* Bloques sugeridos: se distinguen de los eventos reales (borde punteado, fondo suave, etiqueta). */
+.ev.sug{background:color-mix(in srgb,var(--accent-soft) 45%,var(--surface))}
+.ev.sug::before{background:transparent;width:0;border-left:2px dashed var(--muted);border-radius:0;left:2px}
+.ev.sug .sug-main{display:grid;grid-template-columns:62px 1fr auto;gap:12px;align-items:center;padding:10px 14px}
+.ev.sug .sug-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ev.sug .t{font-weight:600}
+.sug-tag{display:inline-block;margin-right:8px;font-size:.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);vertical-align:1px}
+.sug-why{font-size:.84rem;color:var(--muted);overflow-wrap:anywhere}
+.sug-go{padding:6px 12px;font-size:.85rem;border-radius:999px;background:var(--surface);border:1px solid var(--line)}
+.sug-go:hover{border-color:var(--ink)}
+.sug-note{margin:8px 2px 0;font-size:.85rem;color:var(--muted)}
 .past-toggle{all:unset;box-sizing:border-box;display:flex;width:100%;padding:10px 14px;font-size:.9rem;color:var(--muted);cursor:pointer;gap:8px}
 .past-toggle:hover{color:var(--ink)}
 .past-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}

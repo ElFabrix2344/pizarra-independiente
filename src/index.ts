@@ -258,7 +258,7 @@ async function studyAction(req: Request, env: Env, url: URL, tz: string): Promis
     return json({ ...(await saveCycleStart(store, start, opts)), grades });
   }
   if (p === '/api/study/courses' && req.method === 'PUT') return json(await ttCall(() => saveCourses(client, store, body)));
-  if (p === '/api/study/goals' && req.method === 'PUT') return json(await ttCall(() => saveGoals(client, store, body.goals, body.daily)));
+  if (p === '/api/study/goals' && req.method === 'PUT') return json(await ttCall(() => saveGoals(client, store, body.goals, body.daily, body.blocks)));
 
   const m = p.match(/^\/api\/study\/sessions\/([01])\/([^/]+)$/);
   if (m && req.method === 'DELETE') {

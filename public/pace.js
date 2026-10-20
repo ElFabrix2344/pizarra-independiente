@@ -79,5 +79,51 @@
     return { best, bestDay, prevBest, prevBestDay, flowers, newRecord: prevBest > 0 && (days[today] || 0) > prevBest };
   }
 
-  root.Pace = { weekPlan, forecastWeek, pastWeeks, dailyStreak, bonus, garden };
+  /**
+   * Huecos libres en [from, to] (ms) entre eventos con hora, dejando `buffer` minutos antes y después
+   * de cada uno. Solo los de al menos `min` minutos. events: [{ start, end }] en ms.
+   */
+  function freeSlots({ events, from, to, buffer = 10, min = 30 }) {
+    const M = 60000;
+    const busy = events
+      .map((e) => [e.start - buffer * M, e.end + buffer * M])
+      .filter(([a, b]) => b > from && a < to)
+      .sort((x, y) => x[0] - y[0]);
+    const out = [];
+    let cur = from;
+    for (const [a, b] of busy) {
+      if (a > cur) out.push({ start: cur, end: Math.min(a, to) });
+      cur = Math.max(cur, b);
+      if (cur >= to) break;
+    }
+    if (cur < to) out.push({ start: cur, end: to });
+    return out.filter((s) => s.end - s.start >= min * M);
+  }
+
+  /**
+   * Reparte lo que falta estudiar en los huecos, en orden: `needs` ya viene por prioridad
+   * ([{ course, minutes }]). Bloques de hasta `max` min (al menos `min`, redondeados a 15) con `gap`
+   * de pausa entre bloques del mismo hueco. Necesidades de menos de 10 min se ignoran.
+   */
+  function suggestBlocks({ slots, needs, max = 90, min = 30, gap = 10, limit = 5 }) {
+    const M = 60000, out = [];
+    const left = needs.map((n) => ({ ...n, minutes: n.minutes >= 10 ? n.minutes : 0 }));
+    for (const s of slots) {
+      let t = Math.ceil(s.start / (5 * M)) * 5 * M; // empieza en un múltiplo de 5 min
+      while (out.length < limit) {
+        const n = left.find((x) => x.minutes > 0);
+        const room = (s.end - t) / M;
+        if (!n || room < min) break;
+        const want = Math.max(min, Math.ceil(n.minutes / 15) * 15);
+        const len = Math.min(max, want, Math.floor(room / 5) * 5);
+        out.push({ start: t, end: t + len * M, course: n.course, minutes: len });
+        n.minutes -= len;
+        t += (len + gap) * M;
+      }
+      if (out.length >= limit || !left.some((x) => x.minutes > 0)) break;
+    }
+    return out;
+  }
+
+  root.Pace = { weekPlan, forecastWeek, pastWeeks, dailyStreak, bonus, garden, freeSlots, suggestBlocks };
 })(typeof window !== 'undefined' ? window : globalThis);

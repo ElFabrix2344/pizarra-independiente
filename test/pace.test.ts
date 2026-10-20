@@ -13,6 +13,9 @@ type PaceApi = {
   garden: (a: { days: Record<string, number>; goal: number; from: string; today: string }) => {
     best: number; bestDay: string | null; prevBest: number; prevBestDay: string | null; flowers: number; newRecord: boolean;
   };
+  freeSlots: (a: { events: Array<{ start: number; end: number }>; from: number; to: number; buffer?: number; min?: number }) => Array<{ start: number; end: number }>;
+  suggestBlocks: (a: { slots: Array<{ start: number; end: number }>; needs: Array<{ course: string; minutes: number }>; max?: number; min?: number; gap?: number; limit?: number }) =>
+    Array<{ start: number; end: number; course: string; minutes: number }>;
 };
 let Pace: PaceApi;
 
@@ -84,6 +87,40 @@ describe('racha de la meta diaria (4 h, lunes a viernes)', () => {
   });
   it('estudiar el fin de semana no suma a la racha de días de la meta', () => {
     expect(run({ '2026-10-17': 300, '2026-10-19': 0 })).toMatchObject({ current: 2, total: 4 });
+  });
+});
+
+describe('bloques sugeridos', () => {
+  // Horas en minutos desde la medianoche (ms) para leer las pruebas fácil.
+  const h = (hh: number, mm = 0) => (hh * 60 + mm) * 60000;
+  const hm = (ms: number) => `${Math.floor(ms / 3600000)}:${String((ms / 60000) % 60).padStart(2, '0')}`;
+
+  it('huecos entre clases, con 10 min antes y después de cada evento, y solo de 30 min o más', () => {
+    const events = [
+      { start: h(9, 30), end: h(11, 20) }, // clase
+      { start: h(11, 30), end: h(12, 0) }, // reunión que se pega a la clase
+      { start: h(18, 30), end: h(21, 20) },
+    ];
+    const slots = Pace.freeSlots({ events, from: h(8), to: h(22) });
+    expect(slots.map((s) => `${hm(s.start)}-${hm(s.end)}`)).toEqual(['8:00-9:20', '12:10-18:20', '21:30-22:00']);
+    // El de 21:30 a 22:00 dura 30 min justos: entra; con mínimo de 45, no.
+    expect(Pace.freeSlots({ events, from: h(8), to: h(22), min: 45 })).toHaveLength(2);
+    // Desde "ahora" (14:07) recorta el hueco de la tarde.
+    expect(Pace.freeSlots({ events, from: h(14, 7), to: h(22) }).map((s) => hm(s.start))).toEqual(['14:07', '21:30']);
+  });
+  it('reparte por prioridad en bloques de hasta 90 min con 10 min de pausa', () => {
+    const slots = [{ start: h(12, 10), end: h(18, 20) }];
+    const out = Pace.suggestBlocks({ slots, needs: [{ course: 'EPP', minutes: 150 }, { course: 'HEE', minutes: 20 }, { course: 'PSC', minutes: 5 }] });
+    expect(out.map((b) => `${hm(b.start)}-${hm(b.end)} ${b.course}`)).toEqual([
+      '12:10-13:40 EPP', // 90 (tope)
+      '13:50-14:50 EPP', // los 60 que faltan
+      '15:00-15:30 HEE', // 20 → mínimo 30
+    ]); // PSC: menos de 10 min, se ignora
+  });
+  it('si un hueco no alcanza, sigue en el siguiente; empieza en múltiplos de 5 min', () => {
+    const slots = [{ start: h(14, 7), end: h(14, 50) }, { start: h(21, 30), end: h(22, 0) }];
+    const out = Pace.suggestBlocks({ slots, needs: [{ course: 'EPP', minutes: 75 }] });
+    expect(out.map((b) => `${hm(b.start)}-${hm(b.end)}`)).toEqual(['14:10-14:50', '21:30-22:00']);
   });
 });
 
