@@ -44,6 +44,21 @@ export interface FilterQuery {
   status?: number[];
 }
 
+/**
+ * Campos que se pueden mandar al crear o editar una tarea. Fechas con formatTickTickDate; en las de
+ * día completo, la medianoche del día en `timeZone`. `reminders`: "TRIGGER:PT0S" = a la hora de la tarea;
+ * en las de día completo cuentan desde la medianoche ("TRIGGER:P0DT6H30M0S" = ese día a las 6:30).
+ */
+export interface TaskFields {
+  content?: string;
+  priority?: number;
+  startDate?: string;
+  dueDate?: string;
+  isAllDay?: boolean;
+  timeZone?: string;
+  reminders?: string[];
+}
+
 export class TickTickClient {
   private readonly getAccessToken: () => Promise<string>;
   private readonly fetchImpl: typeof fetch;
@@ -114,12 +129,12 @@ export class TickTickClient {
   }
 
   /** POST /task — `title` y `projectId` obligatorios. La doc lista 200 (Task) y 201 sin cuerpo: puede volver `undefined`. */
-  createTask(t: { projectId: string; title: string; content?: string; priority?: number }): Promise<TickTickTask | undefined> {
+  createTask(t: { projectId: string; title: string } & TaskFields): Promise<TickTickTask | undefined> {
     return this.request('POST', '/task', t);
   }
 
   /** POST /task/{taskId} — `id` y `projectId` obligatorios; se mandan solo los campos que cambian. */
-  updateTask(t: { id: string; projectId: string; title?: string; content?: string }): Promise<TickTickTask | undefined> {
+  updateTask(t: { id: string; projectId: string; title?: string } & TaskFields): Promise<TickTickTask | undefined> {
     return this.request('POST', `/task/${enc(t.id)}`, t);
   }
 

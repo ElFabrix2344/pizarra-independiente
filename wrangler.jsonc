@@ -36,9 +36,10 @@
     "TICKTICK_STRATEGY": "undone"
   },
 
-  // Cada 2 horas (UTC): revisa la nota «resumen para Claude» en TickTick
-  // por si hubo sesiones desde la app de TickTick o cambió el día.
-  "triggers": { "crons": ["0 */2 * * *"] },
+  // Horas en UTC (Lima = UTC−5). Cada 2 horas: revisa la nota «resumen para Claude» en TickTick
+  // por si hubo sesiones desde la app de TickTick o cambió el día. 11:25 = 6:25 en Lima: plan de la
+  // mañana con Claude (el Worker solo lo genera de lunes a viernes; ver PLAN_CRON en src/index.ts).
+  "triggers": { "crons": ["0 */2 * * *", "25 11 * * *"] },
 
   "observability": { "enabled": true }
 }

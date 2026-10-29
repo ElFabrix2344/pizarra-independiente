@@ -95,5 +95,6 @@ export function configCheck(env: Env) {
     googleClientSecret: { ...describe(gsec), formatOk: gsec.startsWith('GOCSPX-') },
     ticktickClientId: describe(env.TICKTICK_CLIENT_ID),
     ticktickClientSecret: describe(env.TICKTICK_CLIENT_SECRET),
+    anthropicApiKey: { ...describe(env.ANTHROPIC_API_KEY), formatOk: (env.ANTHROPIC_API_KEY ?? '').startsWith('sk-ant-') },
   };
 }

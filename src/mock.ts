@@ -11,6 +11,7 @@ const completed = new Set<string>();
 // Listas y tareas creadas por la app (p. ej. la nota para Claude), en memoria.
 const createdProjects: TickTickProject[] = [];
 const appTasks: TickTickTask[] = [];
+const DATE_FIELDS = ['startDate', 'dueDate', 'isAllDay', 'timeZone', 'reminders'] as const;
 let appSeq = 0;
 /** Solo para tests: las tareas creadas por la app (se pueden borrar o completar a mano). */
 export function _mockAppTasks() {
@@ -194,6 +195,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       if (!b.title || !b.projectId) return json(undefined, 400);
       if (!createdProjects.some((x) => x.id === b.projectId) && !projects.some((x) => x.id === b.projectId)) return json(undefined, 404);
       const t: TickTickTask = { id: 't-app' + ++appSeq, projectId: b.projectId, title: b.title, content: b.content ?? '', priority: 0, status: 0, kind: 'TEXT' };
+      for (const k of DATE_FIELDS) if (b[k] !== undefined) Object.assign(t, { [k]: b[k] });
       appTasks.push(t);
       return json(t);
     }
@@ -204,6 +206,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       if (!t) return json(undefined, 404);
       if (b.title !== undefined) t.title = b.title;
       if (b.content !== undefined) t.content = b.content;
+      for (const k of DATE_FIELDS) if (b[k] !== undefined) Object.assign(t, { [k]: b[k] });
       return json(t);
     }
     m = p.match(/^\/open\/v1\/project\/([^/]+)\/column$/);
@@ -263,8 +266,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
       const a = parseTickTickDate(body.startDate)!.getTime();
       const b = parseTickTickDate(body.endDate)!.getTime();
       if (b < a || b - a > 14 * 86400000) return json([]); // la doc: rango inválido → []
+      // Como en TickTick, incluye las tareas con fecha creadas por la app (p. ej. «☀️ Plan de hoy»).
       return json(
-        tasks(now).filter((t) => {
+        [...tasks(now), ...appTasks.filter((t) => t.status === 0)].filter((t) => {
           const d = parseTickTickDate(t.startDate ?? t.dueDate)?.getTime();
           return d !== undefined && d >= a && d <= b;
         }),

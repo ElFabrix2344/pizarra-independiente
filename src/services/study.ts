@@ -62,6 +62,8 @@ export interface StudySettings {
   daily?: DailyGoal;
   /** Bloques sugeridos en la Agenda. Sin guardar: DEFAULT_BLOCKS. */
   blocks?: BlockPrefs;
+  /** Plan de la mañana con Claude. Sin guardar: DEFAULT_PLAN. */
+  plan?: PlanPrefs;
 }
 
 export interface BlockPrefs {
@@ -82,6 +84,18 @@ export function validBlocks(raw: unknown): BlockPrefs {
   if (!from || !to) throw new ApiError('bad_request', 400, 'El horario de los bloques debe ser HH:MM.');
   if (from >= to) throw new ApiError('bad_request', 400, 'El horario de los bloques debe empezar antes de terminar.');
   return { on: r.on !== false, from, to };
+}
+
+/** Plan de la mañana (services/morningPlan.ts): solo se puede apagar; la hora y los días son fijos. */
+export interface PlanPrefs {
+  on: boolean;
+}
+export const DEFAULT_PLAN: PlanPrefs = { on: true };
+export const planPrefs = (s: StudySettings): PlanPrefs => s.plan ?? DEFAULT_PLAN;
+
+export function validPlan(raw: unknown): PlanPrefs {
+  if (!raw || typeof raw !== 'object') throw new ApiError('bad_request', 400, 'Preferencias del plan inválidas.');
+  return { on: (raw as Record<string, unknown>).on !== false };
 }
 
 export interface DailyGoal {
@@ -138,6 +152,7 @@ export class StudyStore {
       ...(s?.cycleStart ? { cycleStart: s.cycleStart } : {}),
       ...(s?.daily ? { daily: s.daily } : {}),
       ...(s?.blocks ? { blocks: s.blocks } : {}),
+      ...(s?.plan ? { plan: s.plan } : {}),
     };
   }
   setSettings(s: StudySettings) {
@@ -178,7 +193,7 @@ export function focusSeconds(f: TickTickFocus): number {
   return 0;
 }
 
-const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+export const fold = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 /** Curso escrito en la nota de un registro creado por la app. */
 export function courseFromNote(note: string | undefined, courses: string[]): string | null {
@@ -305,6 +320,8 @@ export interface StudyResult {
   daily: DailyGoal;
   /** Preferencias de los bloques sugeridos. */
   blocks: BlockPrefs;
+  /** Plan de la mañana con Claude (encendido o no). */
+  plan: PlanPrefs;
 }
 
 /** Ventana máxima de GET /focus (el servidor recorta a 30 días). */
@@ -407,6 +424,7 @@ export async function getStudy(
     ],
     daily: dailyGoal(settings),
     blocks: blockPrefs(settings),
+    plan: planPrefs(settings),
   };
 }
 
@@ -717,10 +735,18 @@ export async function addManual(
   return { saved: true, id: focus?.id ?? null, course, minutes: Math.round(minutes), date };
 }
 
-export async function saveGoals(client: TickTickClient, store: StudyStore, goals: unknown, dailyRaw?: unknown, blocksRaw?: unknown) {
+export async function saveGoals(
+  client: TickTickClient,
+  store: StudyStore,
+  goals: unknown,
+  dailyRaw?: unknown,
+  blocksRaw?: unknown,
+  planRaw?: unknown,
+) {
   if (!goals || typeof goals !== 'object') throw new ApiError('bad_request', 400, 'Metas inválidas.');
   const daily = dailyRaw === undefined ? undefined : validDaily(dailyRaw);
   const blocks = blocksRaw === undefined ? undefined : validBlocks(blocksRaw);
+  const plan = planRaw === undefined ? undefined : validPlan(planRaw);
   const settings = await store.getSettings();
   const courses = visibleCourses(await loadCourses(client), settings);
   const clean: Record<string, number> = {};
@@ -730,9 +756,9 @@ export async function saveGoals(client: TickTickClient, store: StudyStore, goals
     if (!name || !Number.isFinite(n) || n <= 0) continue;
     clean[name] = Math.min(Math.round(n), 80 * 60);
   }
-  const next = { ...settings, goals: clean, ...(daily ? { daily } : {}), ...(blocks ? { blocks } : {}) };
+  const next = { ...settings, goals: clean, ...(daily ? { daily } : {}), ...(blocks ? { blocks } : {}), ...(plan ? { plan } : {}) };
   await store.setSettings(next);
-  return { goals: clean, daily: dailyGoal(next), blocks: blockPrefs(next) };
+  return { goals: clean, daily: dailyGoal(next), blocks: blockPrefs(next), plan: planPrefs(next) };
 }
 
 /** Qué columnas ocultar y qué cursos extra agregar. Las metas de cursos que dejan de verse se conservan. */

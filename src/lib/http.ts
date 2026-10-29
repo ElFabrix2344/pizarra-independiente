@@ -8,7 +8,7 @@ export type ApiErrorCode =
   | 'not_found'
   | 'misconfigured';
 
-export type Provider = 'google' | 'ticktick';
+export type Provider = 'google' | 'ticktick' | 'claude';
 
 export class ApiError extends Error {
   constructor(

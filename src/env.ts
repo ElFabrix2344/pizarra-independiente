@@ -21,6 +21,8 @@ export interface Env {
   TICKTICK_CLIENT_SECRET?: string;
   TICKTICK_API_TOKEN?: string;
   TOKEN_ENCRYPTION_KEY?: string;
+  /** Clave de la API de Claude (platform.claude.com) para el plan de la mañana. Sin ella, el plan no se genera. */
+  ANTHROPIC_API_KEY?: string;
 
   // solo desarrollo local (se ignoran fuera de localhost)
   DEV_MODE?: string;

@@ -1,11 +1,24 @@
 import { verifyAccess } from './auth/access';
-import { isLocalDev, type Env } from './env';
+import { isLocalDev, isMock, type Env } from './env';
 import { ApiError, errorResponse, escapeHtml, htmlPage, json } from './lib/http';
 import { GoogleError } from './lib/google';
+import { dayKeyInZone } from './lib/time';
 import { handleOAuth } from './oauth';
 import { connectionStatus, getGoogleAccessToken, getTickTickClient } from './providers';
 import { getPanelCalendar } from './services/calendar';
 import { noteStatus, recordNoteError, saveContext, syncNote } from './services/claudeNote';
+import {
+  claudeLLM,
+  generatePlan,
+  getDayPlan,
+  isPlanDay,
+  mockLLM,
+  planStatus,
+  planTaskId,
+  recordPlanError,
+  type PlanDeps,
+  type PlanLLM,
+} from './services/morningPlan';
 import { buildResult, GradeStore, validateCourse, validatePrior } from './services/grades';
 import { getEvaluations, getIgnoredEvals, getPanelTasks, ignoreEval, restoreEvals, ttCall, type Strategy } from './services/tasks';
 import {
@@ -17,6 +30,7 @@ import {
   visibleCourses,
   weekRange,
   pauseStudy,
+  planPrefs,
   resumeStudy,
   saveCourses,
   saveCycleStart,
@@ -28,6 +42,8 @@ import {
 } from './services/study';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** 11:25 UTC = 6:25 en Lima: el plan de la mañana queda listo para el aviso de las 6:30 (wrangler.jsonc → triggers). */
+const PLAN_CRON = '25 11 * * *';
 
 const CSP = [
   "default-src 'self'",
@@ -64,12 +80,18 @@ export default {
     return withSecurityHeaders(res);
   },
 
-  /** Cada 2 horas (wrangler.jsonc → triggers): revisa la nota de Claude por si hubo sesiones desde la app de TickTick. */
-  async scheduled(_ctrl: ScheduledController, rawEnv: Env, ctx: ExecutionContext): Promise<void> {
+  /**
+   * Tareas programadas (wrangler.jsonc → triggers): cada 2 horas, la nota de Claude (por si hubo sesiones
+   * desde la app de TickTick); a las 6:25 de Lima, el plan de la mañana.
+   */
+  async scheduled(ctrl: ScheduledController, rawEnv: Env, ctx: ExecutionContext): Promise<void> {
     const env = trimSecrets(rawEnv);
     // En desarrollo local (DEV_MODE) se usa una URL de localhost para que MOCK_DATA aplique y nunca toque el TickTick real.
     const url = new URL(env.DEV_MODE === 'true' ? 'http://localhost/' : 'https://cron.invalid/');
-    ctx.waitUntil(runNoteSync(env, url, env.TIMEZONE || 'America/Lima'));
+    const tz = env.TIMEZONE || 'America/Lima';
+    // El plan espera a Claude (decenas de segundos): se espera aquí mismo, no en waitUntil.
+    if (ctrl.cron === PLAN_CRON) await runMorningPlan(env, url, tz);
+    else ctx.waitUntil(runNoteSync(env, url, tz));
   },
 } satisfies ExportedHandler<Env>;
 
@@ -89,8 +111,13 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
 
       case '/api/tasks': {
         const { client } = await getTickTickClient(env, url);
-        return json(await getPanelTasks(client, { now: new Date(), timeZone: tz, strategy }));
+        // La tarea «☀️ Plan de hoy» ya se ve en la Agenda: no se repite entre las tareas.
+        const [r, own] = await Promise.all([getPanelTasks(client, { now: new Date(), timeZone: tz, strategy }), planTaskId(env.TOKENS)]);
+        return json(own ? { ...r, tasks: r.tasks.filter((t) => t.id !== own) } : r);
       }
+
+      case '/api/plan':
+        return json(await planStatus(env.TOKENS, { now: new Date(), timeZone: tz, configured: !!planLLM(env, url) }));
 
       case '/api/evaluations': {
         const { client } = await getTickTickClient(env, url);
@@ -125,6 +152,21 @@ async function route(req: Request, env: Env, url: URL, ctx: ExecutionContext): P
         return json(await ttCall(() => getHistory(client, studyStore(env, url), { now: new Date(), timeZone: tz })));
       }
     }
+  }
+
+  // Plan de la mañana pedido a mano (también para rehacerlo): espera a Claude y devuelve el estado nuevo.
+  if (p === '/api/plan') {
+    if (req.method !== 'POST') throw new ApiError('bad_request', 405, 'Usa POST.');
+    assertSameOrigin(req, url);
+    const llm = planLLM(env, url);
+    if (!llm) throw new ApiError('misconfigured', 500, 'Falta la clave de Claude (ANTHROPIC_API_KEY) en los secretos del Worker.', 'claude');
+    try {
+      await generatePlan(await planDeps(env, url, tz, llm), { now: new Date(), timeZone: tz, strategy });
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 429)) await recordPlanError(env.TOKENS, e instanceof Error ? e.message : String(e)).catch(() => {});
+      throw e;
+    }
+    return json(await planStatus(env.TOKENS, { now: new Date(), timeZone: tz, configured: true }));
   }
 
   if (p.startsWith('/api/study/')) {
@@ -210,6 +252,37 @@ async function runNoteSync(env: Env, url: URL, tz: string, force = false): Promi
   }
 }
 
+/** Claude por la API si hay clave; en local con datos simulados y sin clave, un plan de prueba. */
+function planLLM(env: Env, url: URL): PlanLLM | null {
+  if (env.ANTHROPIC_API_KEY) return claudeLLM(env.ANTHROPIC_API_KEY);
+  return isMock(url, env) ? mockLLM : null;
+}
+
+async function planDeps(env: Env, url: URL, tz: string, llm: PlanLLM): Promise<PlanDeps> {
+  const { client } = await getTickTickClient(env, url);
+  return { kv: env.TOKENS, ticktick: client, llm, calendar: async () => (await calendarWithRetry(env, url, tz)).events };
+}
+
+/**
+ * Plan automático de las 6:25: solo de lunes a viernes, si está encendido, si hay clave y si aún no hay
+ * plan de hoy. Nunca lanza: si falla, guarda el error para mostrarlo en la Bitácora.
+ */
+async function runMorningPlan(env: Env, url: URL, tz: string): Promise<void> {
+  const now = new Date();
+  const today = dayKeyInZone(now, tz);
+  const llm = planLLM(env, url);
+  if (!llm || !isPlanDay(today)) return;
+  try {
+    const settings = await studyStore(env, url).getSettings();
+    if (!planPrefs(settings).on || (await getDayPlan(env.TOKENS, today))) return;
+    await generatePlan(await planDeps(env, url, tz, llm), { now, timeZone: tz, strategy: pickStrategy(url, env) });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('Plan de la mañana:', msg);
+    await recordPlanError(env.TOKENS, msg).catch(() => {});
+  }
+}
+
 /** Después de una acción que cambia datos: la nota se actualiza en segundo plano, sin demorar la respuesta. */
 function syncLater(ctx: ExecutionContext, env: Env, url: URL, tz: string) {
   ctx.waitUntil(runNoteSync(env, url, tz));
@@ -258,7 +331,7 @@ async function studyAction(req: Request, env: Env, url: URL, tz: string): Promis
     return json({ ...(await saveCycleStart(store, start, opts)), grades });
   }
   if (p === '/api/study/courses' && req.method === 'PUT') return json(await ttCall(() => saveCourses(client, store, body)));
-  if (p === '/api/study/goals' && req.method === 'PUT') return json(await ttCall(() => saveGoals(client, store, body.goals, body.daily, body.blocks)));
+  if (p === '/api/study/goals' && req.method === 'PUT') return json(await ttCall(() => saveGoals(client, store, body.goals, body.daily, body.blocks, body.plan)));
 
   const m = p.match(/^\/api\/study\/sessions\/([01])\/([^/]+)$/);
   if (m && req.method === 'DELETE') {
@@ -350,7 +423,7 @@ function assertSameOrigin(req: Request, url: URL) {
 function trimSecrets(env: Env): Env {
   const keys = [
     'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'TICKTICK_CLIENT_ID', 'TICKTICK_CLIENT_SECRET',
-    'TICKTICK_API_TOKEN', 'TOKEN_ENCRYPTION_KEY', 'ACCESS_TEAM_DOMAIN', 'ACCESS_AUD', 'ALLOWED_EMAILS',
+    'TICKTICK_API_TOKEN', 'TOKEN_ENCRYPTION_KEY', 'ACCESS_TEAM_DOMAIN', 'ACCESS_AUD', 'ALLOWED_EMAILS', 'ANTHROPIC_API_KEY',
   ] as const;
   const out: Env = { ...env };
   for (const k of keys) if (typeof out[k] === 'string') out[k] = out[k]!.trim().replace(/^["']|["']$/g, '');

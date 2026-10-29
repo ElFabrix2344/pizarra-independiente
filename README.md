@@ -39,6 +39,8 @@ Todas las rutas exigen sesión de Cloudflare Access.
 | DELETE | `/api/study/sessions/:type/:id` | Borra un registro de enfoque (`type` 0 = pomodoro, 1 = cronómetro) |
 | PUT | `/api/claude-note/context` | Guarda el contexto para Claude (`{ "text" }`, hasta 1500 caracteres) y reescribe la nota |
 | POST | `/api/claude-note/sync` | Reescribe ya la nota «resumen para Claude» en TickTick |
+| GET | `/api/plan` | Plan de la mañana de hoy (si hay), si está encendido, gasto del mes y último error |
+| POST | `/api/plan` | Pide a Claude el plan de hoy ahora (o uno nuevo); hasta 4 por día |
 | GET | `/api/status` | Qué cuentas están conectadas y comprobación de formato de las credenciales (sin mostrar secretos) |
 | GET | `/api/debug/ticktick` | Diagnóstico: compara las dos estrategias de lectura de TickTick y muestra los campos reales |
 | GET | `/oauth/google/start`, `/oauth/ticktick/start` | Conectan cada cuenta (OAuth) |
@@ -162,6 +164,8 @@ npx wrangler secret put ACCESS_TEAM_DOMAIN
 npx wrangler secret put ACCESS_AUD
 npx wrangler secret put ALLOWED_EMAILS
 npx wrangler secret put TOKEN_ENCRYPTION_KEY
+# Opcional, para el plan de la mañana (ver «Plan de la mañana»):
+npx wrangler secret put ANTHROPIC_API_KEY
 ```
 
 - `ACCESS_TEAM_DOMAIN`: `https://<team>.cloudflareaccess.com`
@@ -297,6 +301,49 @@ Por qué importa cada regla:
 - **Por día** (al final de «Metas de la semana»): tabla curso × día de la semana, con el total de cada día. Muestra la semana actual (incluye el cronómetro en marcha) y con ‹ › las anteriores del historial (`dayCourses` en `/api/study/history`).
 - **Constancia** (visible en Estudio): un cuadrito por día desde el inicio del ciclo, más intenso cuanto más estudiaste (escala de un tono validada con `--ordinal` en claro y oscuro). Con meta diaria, los niveles van por cuartos de la meta (con 4 h: 1 min, 1 h, 2 h, 3 h y 4 h+), así que el tono pleno es la meta cumplida, y esos días llevan además una **flor** (no depende solo del color); sin meta, 1 min, 30 min, 1 h, 2 h, 3 h+. Muestra la racha actual (sigue viva hasta que termine el día), la mejor racha, los días con estudio y los **días con la meta**; la ayuda de cada día dice si la cumpliste o cuánto faltó. Usa los mismos datos del historial, que se cargan al abrir la app, tras cada sesión y cada 30 min.
 - **Historial del ciclo** (panel desplegable, se carga al abrirlo): columnas apiladas por semana y curso desde el **inicio del ciclo** (editable; por defecto, 12 semanas), línea de la meta semanal total, detalle por semana al pasar el cursor o tocar, totales y promedio por curso y vista de tabla. Máximo 26 semanas. La paleta del gráfico está validada para daltonismo y contraste en claro y oscuro.
+
+## Plan de la mañana (Claude)
+
+De lunes a viernes a las 6:25 (hora de Lima) la Bitácora le pide a Claude, por la API de Anthropic, que reparta lo que te falta estudiar hoy en tus huecos libres, con una tarea concreta por bloque.
+
+- **Dónde llega:**
+  - **TickTick:** una tarea de día completo «☀️ Plan de hoy — jue 29/10» en la lista «Bitácora», con aviso ese día a las **6:30**. Es siempre la misma tarea, que se reescribe cada mañana. Si la marcas como hecha o la borras, al día siguiente se crea otra. No se repite entre las tareas de la Bitácora.
+  - **Agenda:** el resumen va arriba de «Hoy». Sus bloques salen como filas «Plan» con la tarea concreta y un ▶ para empezar el cronómetro. Mientras al plan le queden bloques por delante, reemplazan a los «Sugerido» de hoy.
+- **A mano:** «Pedir plan a Claude» (si aún no hay plan) u «Otro plan» lo arman en el momento. Desde ahí, el horario empieza a la hora actual. Hay un tope de 4 planes por día, contando el automático. Se apaga en Metas → «Plan de la mañana» (también se puede pedir uno desde ahí).
+- **Quién calcula qué:** los números los pone la app, con la misma lógica que los bloques sugeridos (`public/pace.js`, que el Worker importa vía `src/lib/pace.ts`):
+  - huecos libres entre clases, con 10 min de margen;
+  - cuánto le toca hoy a cada curso según su meta semanal;
+  - lo que falta para la meta diaria;
+  - la prioridad, primero la evaluación más cercana.
+
+  Claude elige qué tarea va en cada bloque y lo explica. Si lo que propone no cabe en los huecos, se usan los bloques de la app.
+- **Qué se le manda a Claude:**
+  - los huecos libres y las clases y eventos de hoy;
+  - la meta diaria y las horas por curso de la semana;
+  - las evaluaciones de las próximas 3 semanas, con su peso y lo que necesitas (de Notas);
+  - las tareas pendientes (vencidas, de hoy y de 7 días) con su nota;
+  - el plan base de la app y tu «Contexto para Claude».
+
+  Responde en JSON con un esquema fijo, y el servidor valida cada bloque. Código: `src/services/morningPlan.ts`.
+- **Modelo y costo:**
+  - **Modelo:** Claude Opus 5.5 (`claude-opus-5-5`, esfuerzo medio). Si un filtro de seguridad rechaza el pedido, la API lo reintenta sola con otro modelo (`fallbacks: "default"`).
+  - **Costo:** cada plan cuesta unos centavos de dólar. En Metas → «Plan de la mañana» se ve cuántos van en el mes y el gasto estimado, a precio de lista (US$4 / US$20 por millón de tokens de entrada / salida).
+  - **Cómo se paga:** con créditos prepagados en la cuenta de Claude Platform, aparte de un plan de claude.ai.
+- **Privacidad:** esos datos pasan por la API de Anthropic. Según su documentación, no se usan para entrenar modelos sin tu permiso y se borran en un plazo de 30 días (salvo abuso o requisitos legales). La clave solo vive en los secretos del Worker.
+- **Configuración (una vez):**
+  1. En [platform.claude.com](https://platform.claude.com) crea la cuenta y compra créditos.
+  2. Crea un *workspace* «Bitácora» y ponle un **límite de gasto** mensual (por ejemplo, US$5). El workspace por defecto no admite límite.
+  3. Crea una API key en ese workspace.
+  4. Cárgala como secreto `ANTHROPIC_API_KEY`, en el panel de Cloudflare o con `npx wrangler secret put ANTHROPIC_API_KEY` (ver [Secretos del Worker](#5-secretos-del-worker)).
+  5. Recarga la Bitácora y prueba con «Pedir plan a Claude». `/api/status` → `config.anthropicApiKey` dice si la clave está y si tiene el formato correcto.
+- **Estado en KV:**
+  - `plan:<día>`: el plan del día; expira a los 3 días.
+  - `plan:state`: dónde está la tarea de TickTick y el último error.
+  - `plan:usage:<mes>`: planes y tokens del mes.
+- **Desarrollo local:**
+  - **Sin clave y con `MOCK_DATA=true`:** se genera un «plan de prueba» con los bloques de la app, sin llamar a Claude.
+  - **Con `ANTHROPIC_API_KEY` en `.env`:** se llama a Claude de verdad, con los datos simulados, y cada plan cuesta.
+  - **Probar el cron:** `curl "http://127.0.0.1:8787/cdn-cgi/local/scheduled?cron=25+11+*+*+*"`. Si ya hay plan de hoy, no hace nada.
 
 ## Resumen para Claude
 

@@ -96,12 +96,12 @@ export interface NoteInput {
 export async function gatherNoteInput(
   client: TickTickClient,
   kv: KVNamespace,
-  opts: { now: Date; timeZone: string; strategy: Strategy },
+  opts: { now: Date; timeZone: string; strategy: Strategy; weeks?: number },
 ): Promise<NoteInput> {
   const { now, timeZone } = opts;
   return ttCall(async () => {
     const [study, ignored, context] = await Promise.all([
-      getStudyDigest(client, new StudyStore(kv), { now, timeZone, weeks: 4 }),
+      getStudyDigest(client, new StudyStore(kv), { now, timeZone, weeks: opts.weeks ?? 4 }),
       getIgnoredEvals(kv),
       getContext(kv),
     ]);
@@ -278,7 +278,7 @@ async function sha256(s: string): Promise<string> {
 }
 
 /** La lista "Bitácora": la guardada si sigue abierta, una existente con ese nombre o una nueva. */
-async function ensureList(client: TickTickClient, known?: string): Promise<string> {
+export async function ensureList(client: TickTickClient, known?: string): Promise<string> {
   const projects = await client.listProjects();
   if (known && projects.some((p) => p.id === known && !p.closed)) return known;
   const same = projects.find((p) => p.name === NOTE_LIST && !p.closed);

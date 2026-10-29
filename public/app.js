@@ -64,10 +64,13 @@ const S = {
   ev: { status: 'loading', items: [], at: null, err: null },
   st: { status: 'loading', items: null, at: null, err: null },
   gr: { status: 'loading', items: null, at: null, err: null },
+  pl: { status: 'loading', items: null, at: null, err: null },
   refreshing: false,
   session: false,
 };
 let loadedDay = null, lastRefresh = 0, armed = null, armTimer = null, flash = null;
+// Plan de la mañana: pidiéndolo ahora (planBusy) y el último error al pedirlo (planMsg).
+let planBusy = false, planMsg = null;
 // done: id → fecha (ms) de la ocurrencia marcada como hecha. Una tarea que se repite conserva su id
 // y TickTick la pasa a la siguiente fecha: esa ocurrencia nueva sí se muestra.
 const done = new Map(), pending = new Map(), notes = new Map();
@@ -85,6 +88,8 @@ const SOURCES = {
   ev: { path: '/api/evaluations?limit=40', pick: b => { evIgnored = b.ignoredCount || 0; return b.evaluations.map(toTask); } },
   st: { path: '/api/study', pick: b => b },
   gr: { path: '/api/grades', pick: b => b },
+  // Plan de la mañana (Claude): lo arma el servidor a las 6:25; aquí solo se lee.
+  pl: { path: '/api/plan', pick: b => b },
 };
 
 /** Eventos leídos + los últimos buenos de un calendario que esta vez falló (el servidor devuelve el resto
@@ -245,10 +250,16 @@ function renderCal() {
   const now = Date.now(), t = today(), mainId = featured().main?.id;
   let groups = new Map();
   for (const e of s.items) { if (!groups.has(e.key)) groups.set(e.key, []); groups.get(e.key).push(e); }
-  // Bloques sugeridos: entran en su día (aunque ese día no tenga eventos).
-  const sug = suggestions();
-  if (sug && (sug.blocks.length || sug.note) && !groups.has(sug.day)) {
-    groups.set(sug.day, []);
+  // Plan de la mañana: mientras le queden bloques por delante, reemplaza a los sugeridos de hoy.
+  const pi = planInfo(), plan = pi && pi.plan;
+  const planBlocks = plan ? plan.blocks.filter(b => Date.parse(b.end) > now) : [];
+  const box = pi ? planBox(pi, now) : '';
+  const sugAll = suggestions();
+  const sug = sugAll && !(planBlocks.length && sugAll.day === t) ? sugAll : null;
+  // Bloques sugeridos y el plan: entran en su día (aunque ese día no tenga eventos).
+  for (const k of [sug && (sug.blocks.length || sug.note) ? sug.day : null, box || planBlocks.length ? t : null]) {
+    if (!k || groups.has(k)) continue;
+    groups.set(k, []);
     groups = new Map([...groups].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
   }
   const canStart = !(S.st.items && S.st.items.active);
@@ -259,9 +270,13 @@ function renderCal() {
     const past = k === t ? timed.filter(e => e.end <= now) : [];
     const rest = timed.filter(e => !past.includes(e));
     const here = sug && sug.day === k ? sug : null;
-    const rows = [...rest.map(e => ({ at: +e.start, html: evRow(e, mainId, now) })), ...(here ? here.blocks : []).map(b => ({ at: b.start, html: sugRow(b, canStart) }))]
-      .sort((a, b) => a.at - b.at);
+    const rows = [
+      ...rest.map(e => ({ at: +e.start, html: evRow(e, mainId, now) })),
+      ...(here ? here.blocks : []).map(b => ({ at: b.start, html: sugRow(b, canStart) })),
+      ...(k === t ? planBlocks : []).map(b => ({ at: Date.parse(b.start), html: planRow(b, canStart) })),
+    ].sort((a, b) => a.at - b.at);
     h += `<div class="day">${dayHeader(k)}`;
+    if (k === t) h += box;
     if (allDay.length) {
       h += '<div class="allday">' + allDay.map(e => e.link
         ? `<a class="chip"${colorAttr(e)} href="${esc(e.link)}" target="_blank" rel="noopener noreferrer">Todo el día · ${esc(e.title)}</a>`
@@ -902,6 +917,7 @@ function renderStudyMore(d) {
     <button type="submit">Guardar sesión</button></form>`;
   const dg = d.daily || { minutes: 0, weekdays: [1, 2, 3, 4, 5] };
   const bp = d.blocks || { on: true, from: '08:00', to: '22:00' };
+  const planOn = d.plan ? d.plan.on : true, pi = S.pl.items;
   const dKey = dg.weekdays.join(',');
   const dOpts = [['1,2,3,4,5', 'Lunes a viernes'], ['1,2,3,4,5,6', 'Lunes a sábado'], ['0,1,2,3,4,5,6', 'Todos los días']];
   if (!dOpts.some(([v]) => v === dKey)) dOpts.push([dKey, daysLabel(dg.weekdays)]);
@@ -916,6 +932,10 @@ function renderStudyMore(d) {
     <label class="check-row"><input type="checkbox" name="blocksOn"${bp.on ? ' checked' : ''}> Mostrar en la Agenda</label>
     <label class="goal-row">Desde<input type="time" name="blocksFrom" value="${esc(bp.from)}" step="300"></label>
     <label class="goal-row">Hasta<input type="time" name="blocksTo" value="${esc(bp.to)}" step="300"></label>
+    <h3 class="sub-h">Plan de la mañana</h3>
+    <p class="hint">De lunes a viernes a las 6:30, Claude reparte lo que te falta estudiar hoy en esos huecos, con una tarea concreta por bloque. Llega como «☀️ Plan de hoy» en TickTick (con aviso) y aparece en la Agenda.</p>
+    <label class="check-row"><input type="checkbox" name="planOn"${planOn ? ' checked' : ''}> Armar el plan cada mañana</label>
+    ${pi ? `<p class="hint">${esc(planSettingsHint(pi))}${pi.configured ? ' ' + `<button type="button" class="linkish" data-plan-run${planBusy ? ' disabled' : ''}>Pedir plan ahora</button>` : ''}</p>` : ''}
     <button type="submit">Guardar metas</button></form>`;
   const list = d.sessions.length
     ? '<ul class="sessions">' + d.sessions.map(x => {
@@ -1046,8 +1066,9 @@ document.addEventListener('submit', ev => {
     f.querySelectorAll('[data-goal]').forEach(i => { const h = Number(i.value); if (h > 0) goals[i.dataset.goal] = Math.round(h * 60); });
     const daily = { minutes: Math.round((Number(f.dailyHours.value) || 0) * 60), weekdays: f.dailyDays.value.split(',').map(Number) };
     const blocks = { on: f.blocksOn.checked, from: f.blocksFrom.value, to: f.blocksTo.value };
+    const plan = { on: f.planOn.checked };
     moreRenderedAt = null;
-    studyAction('/api/study/goals', 'PUT', { goals, daily, blocks });
+    studyAction('/api/study/goals', 'PUT', { goals, daily, blocks, plan }).then(() => load('pl')).then(render);
   }
 });
 document.addEventListener('input', ev => { if (ev.target.closest('#study-more')) moreDirty = true; });
@@ -1553,6 +1574,81 @@ function suggestions() {
   // Terminado el horario de hoy, se planea mañana; si no, se avisa que no hay huecos (o nada, si no falta nada).
   if (now >= today.window.to - 30 * M) return plan(addDays(d.today, 1), false);
   return today.needs ? { ...today, note: `No quedan huecos de 30 min hoy entre ${prefs.from} y ${prefs.to}.` } : today;
+}
+
+/* ---------- plan de la mañana (Claude) ----------
+   Lo arma el servidor (src/services/morningPlan.ts) a las 6:25 de lunes a viernes, o a pedido. Sus bloques
+   usan los mismos huecos que los sugeridos, pero con una tarea concreta y la explicación de Claude. */
+
+function planInfo() {
+  const p = S.pl.items;
+  if (!p) return null;
+  return { ...p, plan: p.plan && p.plan.day === today() ? p.plan : null };
+}
+
+/** "claude-opus-5-5" → "Opus 5.5" (como en la tarea de TickTick). */
+const modelName = id => id === 'simulado' ? 'simulado'
+  : id.replace(/^claude-/, '').replace(/-(\d+)-(\d+)$/, ' $1.$2').replace(/-(\d+)$/, ' $1').replace(/^./, c => c.toUpperCase());
+
+function planBox(pi, now) {
+  const p = pi.plan;
+  const btn = label => `<button type="button" class="linkish" data-plan-run${planBusy ? ' disabled' : ''}>${label}</button>`;
+  let h = '';
+  if (planBusy) {
+    h += '<div class="plan quiet" role="status"><span class="plan-ico" aria-hidden="true">☀️</span><p>Claude está armando tu plan… <span class="muted">(unos 30 s)</span></p></div>';
+  } else if (p) {
+    const by = p.model === 'simulado' ? 'Plan de prueba' : 'Claude ' + modelName(p.model);
+    const more = p.runs < pi.maxRuns ? ' · ' + btn('Otro plan') : '';
+    const tt = pi.taskUrl ? ` · <a href="${esc(pi.taskUrl)}" target="_blank" rel="noopener noreferrer">en TickTick</a>` : '';
+    h += `<div class="plan"><span class="plan-ico" aria-hidden="true">☀️</span><div class="plan-body">
+      <p class="plan-sum">${esc(p.summary)}</p>
+      ${p.note ? `<p class="plan-note"><b>Ojo:</b> ${esc(p.note)}</p>` : ''}
+      ${p.fallback ? '<p class="plan-note">Los bloques de Claude no cabían en tus huecos: van los que calcula la app.</p>' : ''}
+      <p class="plan-meta">${esc(by)} · ${fTime.format(new Date(p.generatedAt))}${more}${tt}</p>
+    </div></div>`;
+  } else if (pi.configured && pi.on && pi.planDay) {
+    const early = fTime.format(new Date(now)) < pi.time;
+    h += `<div class="plan quiet"><span class="plan-ico" aria-hidden="true">☀️</span><p>${early ? `Tu plan llega a las ${esc(pi.time)}.` : 'Sin plan de hoy.'} ${btn('Pedir plan a Claude')}</p></div>`;
+  }
+  // El error se muestra si es más nuevo que el plan (p. ej. falló el de hoy y el de ayer ya no cuenta).
+  const err = planMsg || (pi.error && (!p || (pi.errorAt && pi.errorAt > Date.parse(p.generatedAt))) ? pi.error : null);
+  if (err) h += `<p class="plan-err" role="alert">${esc(err)}</p>`;
+  return h;
+}
+
+function planRow(b, canStart) {
+  const mins = Math.round((Date.parse(b.end) - Date.parse(b.start)) / 60000);
+  const label = b.task ? `${b.course} · ${b.task}` : `${b.course} · ${fmtMin(mins)}`;
+  const why = [b.task ? fmtMin(mins) : '', b.why].filter(Boolean).join(' · ');
+  return `<li class="ev sug plan-b">
+    <div class="sug-main">
+      <span class="when"><b>${fTime.format(new Date(b.start))}</b><span>${fTime.format(new Date(b.end))}</span></span>
+      <span class="sug-body"><span class="t"><span class="sug-tag">Plan</span>${esc(label)}</span>${why ? `<span class="sug-why">${esc(why)}</span>` : ''}</span>
+      ${canStart ? `<button type="button" class="sug-go" data-study-start="${esc(b.course)}" aria-label="Empezar a estudiar ${esc(b.course)}" title="Empezar a estudiar ${esc(b.course)}">▶</button>` : ''}
+    </div></li>`;
+}
+
+/** Pide un plan ahora (también para rehacerlo). Claude tarda unos segundos: se muestra el aviso mientras. */
+async function runPlan() {
+  if (planBusy) return;
+  planBusy = true; planMsg = null; render();
+  try {
+    S.pl.items = await api('/api/plan', { method: 'POST', headers: { 'X-Pizarra': '1', 'Content-Type': 'application/json' }, body: '{}' });
+    S.pl.status = 'ok'; S.pl.at = Date.now();
+  } catch (e) {
+    planMsg = e && e.code === 'session' ? 'Tu sesión expiró: recarga la página.' : (e && e.message) || 'No se pudo armar el plan.';
+    load('pl').then(render);
+  } finally {
+    planBusy = false; render();
+  }
+}
+document.addEventListener('click', ev => { if (ev.target.closest('[data-plan-run]')) runPlan(); });
+
+function planSettingsHint(pi) {
+  if (!pi) return '';
+  if (!pi.configured) return 'Falta la clave de Claude (ANTHROPIC_API_KEY): ver «Plan de la mañana» en el README.';
+  const m = pi.month || { runs: 0, cost: 0 };
+  return `Con ${modelName(pi.model)}. Este mes: ${m.runs === 1 ? '1 plan' : m.runs + ' planes'} · ~US$${m.cost.toFixed(2)}.`;
 }
 
 function sugRow(b, canStart) {
